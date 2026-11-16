@@ -1,0 +1,19 @@
+services:
+  vedio-website:
+    build: .
+    image: vedio-website:latest
+    container_name: vedio-website
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # 与宿主机媒体文件属主保持一致，可用 `id <你的用户>` 查看
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Asia/Shanghai
+      PORT: "8080"
+    volumes:
+      # 视频媒体目录（NAS 共享/挂载点），映射到容器内 /media
+      - /volume1/videos:/media:ro
+      # 缩略图缓存与运行数据，持久化到宿主机
+      - ./data:/data

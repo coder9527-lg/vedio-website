@@ -1,0 +1,15 @@
+# 二进制
+/vedio-server
+/out/
+
+# 本地运行数据与缩略图缓存
+/data/
+
+# 编辑器/系统
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Go
+vendor/

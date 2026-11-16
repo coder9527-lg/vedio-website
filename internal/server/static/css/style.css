@@ -1,0 +1,133 @@
+:root {
+  --bg: #0f172a;
+  --card-bg: #1e293b;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --border: #334155;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+a { color: inherit; text-decoration: none; }
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.site-header h1 { font-size: 20px; margin: 0; }
+
+.header-actions { display: flex; align-items: center; gap: 14px; }
+.count { color: var(--muted); font-size: 14px; }
+
+button, .download-btn {
+  background: var(--accent);
+  color: #082f49;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { opacity: .6; cursor: wait; }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 20px;
+}
+
+.video-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform .15s ease, border-color .15s ease;
+}
+.video-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+
+.thumb-wrap { position: relative; aspect-ratio: 16 / 9; background: #111827; }
+.thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ext-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  background: rgba(8, 47, 73, .85);
+  color: var(--accent);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.meta { padding: 12px 14px; }
+.video-name {
+  margin: 0 0 4px;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.video-path {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty { text-align: center; padding: 80px 0; color: var(--muted); }
+.empty code {
+  background: var(--card-bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--accent);
+}
+.hint { font-size: 13px; }
+
+/* 播放页 */
+.back-link { color: var(--accent); font-size: 18px; }
+.watch-container { max-width: 960px; }
+.watch-title { margin: 0 0 16px; font-size: 22px; word-break: break-all; }
+.player-wrap {
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.player-wrap video { width: 100%; max-height: 75vh; display: block; }
+
+.info-list { margin: 20px 0; display: grid; gap: 8px; }
+.info-list div { display: flex; gap: 12px; font-size: 14px; }
+.info-list dt { color: var(--muted); min-width: 72px; }
+.info-list dd { margin: 0; word-break: break-all; }
+
+.download-btn { display: inline-block; }
+
+.site-footer {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 32px 0 24px;
+}

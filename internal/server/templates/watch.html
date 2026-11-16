@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="watch-page">
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+  </header>
+
+  <main class="container watch-container">
+    <h2 class="watch-title" title="{{.Video.RelPath}}">{{.Video.Name}}</h2>
+    <div class="player-wrap">
+      <video controls preload="metadata" playsinline
+             poster="/thumb/{{.Video.ID}}"
+             src="/stream/{{.Video.ID}}">
+        你的浏览器不支持 HTML5 视频播放，可
+        <a href="/stream/{{.Video.ID}}?download=1">下载文件</a> 后播放。
+      </video>
+    </div>
+    <dl class="info-list">
+      <div><dt>路径</dt><dd>{{.Video.RelPath}}</dd></div>
+      <div><dt>格式</dt><dd>{{.Video.Ext}}</dd></div>
+      <div><dt>修改时间</dt><dd>{{.Video.ModTime.Format "2006-01-02 15:04:05"}}</dd></div>
+    </dl>
+    <a class="download-btn" href="/stream/{{.Video.ID}}?download=1">⬇ 下载原文件</a>
+  </main>
+</body>
+</html>

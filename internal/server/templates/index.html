@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>🎬 {{.Title}}</h1>
+    <div class="header-actions">
+      <span class="count">共 {{.Count}} 个视频</span>
+      <button id="rescan-btn" type="button">重新扫描</button>
+    </div>
+  </header>
+
+  <main class="container">
+    {{if .Videos}}
+    <div class="video-grid">
+      {{range .Videos}}
+      <a class="video-card" href="/watch/{{.ID}}">
+        <div class="thumb-wrap">
+          <img class="thumb" src="/thumb/{{.ID}}" alt="{{.Name}}" loading="lazy">
+          <span class="ext-badge">{{.Ext}}</span>
+        </div>
+        <div class="meta">
+          <h2 class="video-name" title="{{.RelPath}}">{{.Name}}</h2>
+          <p class="video-path">{{.RelPath}}</p>
+        </div>
+      </a>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty">
+      <p>媒体目录中还没有视频。</p>
+      <p class="hint">把视频文件放入挂载的 <code>MEDIA_DIR</code> 目录，然后点击右上角「重新扫描」。</p>
+    </div>
+    {{end}}
+  </main>
+
+  <footer class="site-footer">
+    <span>vedio-website · Go + Docker · NAS 视频站</span>
+  </footer>
+
+  <script>
+    document.getElementById('rescan-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = '扫描中...';
+      try {
+        const res = await fetch('/api/v1/rescan', { method: 'POST' });
+        const data = await res.json();
+        alert('扫描完成，共索引 ' + data.indexed + ' 个视频');
+        location.reload();
+      } catch (err) {
+        alert('扫描失败: ' + err);
+        btn.disabled = false;
+        btn.textContent = '重新扫描';
+      }
+    });
+  </script>
+</body>
+</html>
