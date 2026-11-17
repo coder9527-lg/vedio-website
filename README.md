@@ -5,6 +5,7 @@
 ## 功能特性
 
 - 📁 **自动扫描媒体目录**：递归索引挂载目录中的视频文件（支持 mp4/mkv/mov/avi/webm 等常见格式）
+- 👀 **文件监听自动入库**：基于 fsnotify 递归监听，新增/删除/重命名即时增量更新；事件防抖避免拷入半截文件，NAS 晚挂载自动重试，另支持定时全量兜底（NFS/SMB 事件丢失场景）
 - ⏯️ **在线播放 + 进度条拖拽**：基于 HTTP Range 的流式传输，浏览器原生播放器
 - 🖼️ **ffmpeg 缩略图**：首次访问按需抽帧并缓存，不阻塞扫描；无 ffmpeg 时自动降级占位图
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
@@ -66,6 +67,9 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `FFMPEG_BIN` | `ffmpeg` | ffmpeg 可执行文件路径 |
 | `PUID` / `PGID` | `0` / `0` | 容器内运行用户 UID/GID（NAS 权限适配） |
 | `TZ` | `Asia/Shanghai` | 时区 |
+| `WATCH_ENABLED` | `true` | 是否启用 fsnotify 文件监听自动增量扫描，设为 `false` 关闭 |
+| `WATCH_DEBOUNCE` | `2s` | 文件事件防抖窗口；静默超过该时长才入库，防止拷入未完成的文件 |
+| `RESCAN_INTERVAL` | 空（关闭） | 定时全量兜底扫描间隔（如 `10m`、`1h`），NFS/SMB 等网络盘 inotify 事件可能丢失时建议开启；留空或 `0` 关闭 |
 
 ## HTTP API
 
@@ -81,7 +85,7 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 
 ## 设计说明
 
-- **无数据库**：视频索引保存在内存中，启动时扫描；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。后续如需收藏、播放记录，可引入 SQLite。
+- **无数据库**：视频索引保存在内存中，启动时全量扫描，运行期由 fsnotify 监听增量维护（可选定时全量兜底）；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。后续如需收藏、播放记录，可引入 SQLite。
 - **静态资源内嵌**：模板与 CSS 通过 `go:embed` 编译进二进制，镜像里只有一个可执行文件 + ffmpeg。
 - **浏览器兼容**：MP4/WebM 可直接播放；MKV 等容器取决于浏览器解码能力，不支持时可下载原文件或在后续版本接入服务端转码（HLS）。
 
@@ -89,7 +93,7 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 
 - [ ] 登录认证 / 简单访问密码
 - [ ] SQLite 持久化：播放记录、收藏、搜索
-- [ ] 文件监听（fsnotify）自动增量扫描
+- [x] 文件监听（fsnotify）自动增量扫描（含防抖、晚挂载重试、定时全量兜底）
 - [ ] ffmpeg HLS 在线转码，解决 MKV/小众编码播放问题
 - [ ] 字幕自动挂载与多音轨支持
 - [ ] 海报/元信息刮削（NFO、TMDB）
