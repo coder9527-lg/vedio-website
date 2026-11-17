@@ -12,6 +12,8 @@ services:
       PGID: "1000"
       TZ: Asia/Shanghai
       PORT: "8080"
+      # SQLite 数据库（播放进度/收藏），位于持久化卷内；留空则关闭该功能
+      DB_PATH: "/data/vedio.db"
       # 访问密码：取消注释并设置即开启登录认证
       # AUTH_PASSWORD: "change-me"
       # AUTH_SECRET: "please-change-to-a-long-random-string"

@@ -93,16 +93,64 @@ func (l *Library) Scan() (int, error) {
 	return len(found), err
 }
 
+// Query 控制列表查询的过滤与排序。
+// Sort 支持: "name"（按名称）、"newest"（修改时间倒序）、"oldest"（修改时间正序）、"size"（体积倒序），默认按路径。
+type Query struct {
+	Keyword string
+	Sort    string
+	IDs     map[string]bool // 非空时只返回这些 ID（用于收藏/继续观看等视图）
+	Limit   int             // <= 0 表示不限制
+}
+
 // List 返回按相对路径排序的全部视频。
 func (l *Library) List() []*Video {
+	return l.Query(Query{})
+}
+
+// Query 按条件过滤并排序视频，零值 Query 等价于 List。
+func (l *Library) Query(q Query) []*Video {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
+	keyword := strings.ToLower(strings.TrimSpace(q.Keyword))
 	out := make([]*Video, 0, len(l.videos))
 	for _, v := range l.videos {
+		if len(q.IDs) > 0 && !q.IDs[v.ID] {
+			continue
+		}
+		if keyword != "" && !strings.Contains(strings.ToLower(v.Name), keyword) &&
+			!strings.Contains(strings.ToLower(v.RelPath), keyword) {
+			continue
+		}
 		out = append(out, v)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].RelPath < out[j].RelPath })
+
+	less := func(i, j int) bool { return out[i].RelPath < out[j].RelPath }
+	switch q.Sort {
+	case "name":
+		less = func(i, j int) bool {
+			if out[i].Name == out[j].Name {
+				return out[i].RelPath < out[j].RelPath
+			}
+			return out[i].Name < out[j].Name
+		}
+	case "newest":
+		less = func(i, j int) bool { return out[i].ModTime.After(out[j].ModTime) }
+	case "oldest":
+		less = func(i, j int) bool { return out[i].ModTime.Before(out[j].ModTime) }
+	case "size":
+		less = func(i, j int) bool {
+			if out[i].Size == out[j].Size {
+				return out[i].RelPath < out[j].RelPath
+			}
+			return out[i].Size > out[j].Size
+		}
+	}
+	sort.Slice(out, less)
+
+	if q.Limit > 0 && len(out) > q.Limit {
+		out = out[:q.Limit]
+	}
 	return out
 }
 

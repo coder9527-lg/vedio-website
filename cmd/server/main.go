@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/coder9527-lg/vedio-website/internal/config"
 	"github.com/coder9527-lg/vedio-website/internal/media"
 	"github.com/coder9527-lg/vedio-website/internal/server"
+	"github.com/coder9527-lg/vedio-website/internal/store"
 )
 
 func main() {
@@ -68,6 +70,24 @@ func main() {
 		log.Printf("定时全量兜底扫描已开启，间隔 %s", cfg.RescanInterval)
 	}
 
+	// SQLite 持久化（播放进度/收藏）：DB_PATH 留空则禁用，打开失败时降级运行而不是崩溃
+	var db *store.Store
+	if cfg.DBPath != "" {
+		if dir := filepath.Dir(cfg.DBPath); dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				log.Printf("警告: 创建数据库目录 %s 失败: %v，播放进度/收藏将不可用", dir, err)
+			}
+		}
+		if db, err = store.Open(cfg.DBPath); err != nil {
+			log.Printf("警告: 打开数据库失败: %v，播放进度/收藏将不可用", err)
+			db = nil
+		} else {
+			log.Printf("SQLite 持久化已开启: %s", cfg.DBPath)
+		}
+	} else {
+		log.Println("未设置 DB_PATH，播放进度与收藏功能关闭（设置该环境变量可开启）")
+	}
+
 	var authenticator *auth.Authenticator
 	if cfg.AuthPassword != "" {
 		authenticator, err = auth.New(cfg.AuthPassword, cfg.AuthSecret, cfg.AuthTTL)
@@ -76,7 +96,7 @@ func main() {
 		}
 	}
 
-	srv, err := server.New(library, thumbs, authenticator, cfg.AuthCookieSecure)
+	srv, err := server.New(library, thumbs, db, authenticator, cfg.AuthCookieSecure)
 	if err != nil {
 		log.Fatalf("初始化服务失败: %v", err)
 	}
@@ -112,6 +132,11 @@ func main() {
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Printf("强制关闭: %v", err)
+	}
+	if db != nil {
+		if err := db.Close(); err != nil {
+			log.Printf("关闭数据库失败: %v", err)
+		}
 	}
 	log.Println("服务已退出")
 }

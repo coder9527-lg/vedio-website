@@ -20,7 +20,8 @@ RUN apk add --no-cache ffmpeg ca-certificates tzdata su-exec
 ENV TZ=Asia/Shanghai \
     PORT=8080 \
     MEDIA_DIR=/media \
-    THUMB_DIR=/data/thumbnails
+    THUMB_DIR=/data/thumbnails \
+    DB_PATH=/data/vedio.db
 
 WORKDIR /app
 COPY --from=builder /out/vedio-server /app/vedio-server

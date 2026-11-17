@@ -12,6 +12,7 @@ type Config struct {
 	MediaDir string // 视频媒体目录（NAS 挂载点）
 	ThumbDir string // 缩略图缓存目录
 	FFmpeg   string // ffmpeg 可执行文件路径
+	DBPath   string // SQLite 数据库路径（播放进度/收藏），留空则禁用持久化
 
 	WatchEnabled   bool          // 是否启用文件监听自动扫描
 	WatchDebounce  time.Duration // 文件事件防抖窗口
@@ -38,6 +39,7 @@ func Load() *Config {
 		MediaDir: getenv("MEDIA_DIR", "/media"),
 		ThumbDir: getenv("THUMB_DIR", "/data/thumbnails"),
 		FFmpeg:   getenv("FFMPEG_BIN", "ffmpeg"),
+		DBPath:   os.Getenv("DB_PATH"),
 
 		WatchEnabled:   getenv("WATCH_ENABLED", "true") != "false",
 		WatchDebounce:  parseDuration("WATCH_DEBOUNCE", 2*time.Second),

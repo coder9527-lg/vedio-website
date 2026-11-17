@@ -11,6 +11,7 @@
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
 - 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
+- 💾 **SQLite 持久化（可选）**：设置 `DB_PATH` 即开启播放进度记忆（自动上报、断点续播）与收藏，纯 Go 驱动无需 CGO；不配置则自动降级为纯内存模式
 - 🐳 **Docker 一键部署**：多阶段构建，小镜像；支持 `PUID/PGID` 适配 NAS 挂载卷权限
 - 🛡️ 优雅关闭、请求日志、panic 恢复
 
@@ -22,8 +23,9 @@ vedio-website/
 ├── internal/
 │   ├── auth/              # 访问密码：HMAC 签名 Cookie、登录限流
 │   ├── config/            # 环境变量配置
-│   ├── media/             # 媒体库扫描、ffmpeg 缩略图
-│   └── server/            # HTTP 路由、API、页面模板与静态资源（embed 内嵌）
+│   ├── media/             # 媒体库扫描、查询排序、ffmpeg 缩略图
+│   ├── server/            # HTTP 路由、API、页面模板与静态资源（embed 内嵌）
+│   └── store/             # SQLite 持久化：播放进度、收藏（modernc 纯 Go 驱动）
 ├── docker/
 │   └── entrypoint.sh      # PUID/PGID 权限处理
 ├── Dockerfile
@@ -67,6 +69,7 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `MEDIA_DIR` | `/media` | 视频媒体目录 |
 | `THUMB_DIR` | `/data/thumbnails` | 缩略图缓存目录 |
 | `FFMPEG_BIN` | `ffmpeg` | ffmpeg 可执行文件路径 |
+| `DB_PATH` | 空（关闭） | SQLite 数据库文件路径（如 `/data/vedio.db`），开启播放进度与收藏；留空禁用持久化，接口返回 503 且页面隐藏相关入口 |
 | `PUID` / `PGID` | `0` / `0` | 容器内运行用户 UID/GID（NAS 权限适配） |
 | `TZ` | `Asia/Shanghai` | 时区 |
 | `WATCH_ENABLED` | `true` | 是否启用 fsnotify 文件监听自动增量扫描，设为 `false` 关闭 |
@@ -83,11 +86,15 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | --- | --- | --- |
 | GET | `/` | 视频库首页 |
 | GET | `/watch/{id}` | 视频播放页 |
-| GET | `/api/v1/videos` | 视频列表 JSON |
+| GET | `/api/v1/videos` | 视频列表 JSON（支持 `q` 关键字、`sort` 排序、`view=favorites/continue` 视图） |
 | GET | `/api/v1/videos/{id}` | 单个视频元信息 |
-| POST | `/api/v1/rescan` | 重新扫描媒体目录 |
+| POST | `/api/v1/rescan` | 重新扫描媒体目录（自动清理已删除视频的孤儿进度/收藏） |
 | GET | `/stream/{id}` | 视频流（支持 Range；加 `?download=1` 触发下载） |
 | GET | `/thumb/{id}` | 缩略图（自动生成并缓存） |
+| GET / PUT / DELETE | `/api/v1/videos/{id}/progress` | 查询 / 上报 / 清除播放进度（需 `DB_PATH`） |
+| GET | `/api/v1/progress` | 全部播放进度（需 `DB_PATH`） |
+| GET / POST | `/api/v1/videos/{id}/favorite` | 查询收藏状态 / 收藏·取消·切换（POST 空体即 toggle，需 `DB_PATH`） |
+| GET | `/api/v1/favorites` | 全部收藏 ID（需 `DB_PATH`） |
 | GET / POST | `/login` | 登录页 / 提交密码（开启认证后） |
 | POST | `/logout` | 退出登录并清除会话 |
 
@@ -110,16 +117,31 @@ environment:
 - 同一 IP 连续登录失败 10 次后锁定 10 分钟；回跳地址仅允许站内路径，防止开放重定向；
 - 未设置 `AUTH_SECRET` 时每次启动随机生成密钥，重启后所有登录态失效。
 
+## 播放进度与收藏（可选）
+
+设置 `DB_PATH` 指向一个持久化卷内的数据库文件即可开启（`docker-compose.yml` 已默认配置为 `/data/vedio.db`）：
+
+```yaml
+environment:
+  DB_PATH: "/data/vedio.db"
+```
+
+- 采用 **纯 Go 驱动 `modernc.org/sqlite`**，CGO 关闭即可静态编译，交叉编译与 NAS 容器部署无负担；
+- 播放页每 5 秒、暂停、切后台、关闭页面时自动上报进度，重新打开自动断点续播（看完 95% 以上视为看完，从头播放）；
+- 首页提供「全部 / 继续观看 / ⭐ 收藏」视图，卡片展示播放进度条与续播提示；
+- 数据库以 WAL 模式运行，重扫后自动清理指向已删除视频的孤儿记录；
+- 不配置 `DB_PATH` 时功能整体降级：相关 API 返回 `503`，页面自动隐藏收藏按钮与视图 tab，其余功能不受影响。
+
 ## 设计说明
 
-- **无数据库**：视频索引保存在内存中，启动时全量扫描，运行期由 fsnotify 监听增量维护（可选定时全量兜底）；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。后续如需收藏、播放记录，可引入 SQLite。
+- **存储可选、默认无数据库**：视频索引保存在内存中，启动时全量扫描，运行期由 fsnotify 监听增量维护（可选定时全量兜底）；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。只有显式设置 `DB_PATH` 才启用 SQLite，用于播放进度与收藏。
 - **静态资源内嵌**：模板与 CSS 通过 `go:embed` 编译进二进制，镜像里只有一个可执行文件 + ffmpeg。
 - **浏览器兼容**：MP4/WebM 可直接播放；MKV 等容器取决于浏览器解码能力，不支持时可下载原文件或在后续版本接入服务端转码（HLS）。
 
 ## 路线图（Roadmap）
 
 - [x] 登录认证 / 简单访问密码（HMAC Cookie、失败限流，见 `AUTH_PASSWORD`）
-- [ ] SQLite 持久化：播放记录、收藏、搜索
+- [x] SQLite 持久化：播放进度（自动上报 + 断点续播）、收藏、搜索/排序/视图（见 `DB_PATH`）
 - [x] 文件监听（fsnotify）自动增量扫描（含防抖、晚挂载重试、定时全量兜底）
 - [ ] ffmpeg HLS 在线转码，解决 MKV/小众编码播放问题
 - [ ] 字幕自动挂载与多音轨支持

@@ -20,10 +20,21 @@ type basePage struct {
 	AuthEnabled bool
 }
 
+// 允许的排序白名单，防止把任意字符串透传到查询层。
+var allowedSorts = map[string]bool{
+	"": true, "name": true, "newest": true, "oldest": true, "size": true,
+}
+
 type indexData struct {
 	basePage
-	Videos []*media.Video
-	Count  int
+	Videos  []*media.Video
+	Count   int // 当前视图下的视频数
+	Total   int // 媒体库视频总数
+	State   videoState
+	Query   string // 搜索关键字
+	Sort    string // 当前排序
+	View    string // all | favorites | continue
+	StoreOn bool   // 是否启用持久化
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -31,11 +42,45 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	videos := s.library.List()
+	q := r.URL.Query()
+	keyword := q.Get("q")
+	sortVal := q.Get("sort")
+	if !allowedSorts[sortVal] {
+		sortVal = ""
+	}
+	view := q.Get("view")
+	if view != "favorites" && view != "continue" {
+		view = "all"
+	}
+
+	query := media.Query{Keyword: keyword, Sort: sortVal}
+	state := s.loadVideoState()
+	switch view {
+	case "favorites":
+		if len(state.Favs) == 0 {
+			query.IDs = map[string]bool{} // 强制空结果
+		} else {
+			query.IDs = state.Favs
+		}
+	case "continue":
+		ids := make(map[string]bool, len(state.Progress))
+		for id := range state.Progress {
+			ids[id] = true
+		}
+		query.IDs = ids
+	}
+
+	videos := s.library.Query(query)
 	s.render(w, "index.html", indexData{
 		basePage: basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
 		Videos:   videos,
 		Count:    len(videos),
+		Total:    s.library.Len(),
+		State:    state,
+		Query:    keyword,
+		Sort:     sortVal,
+		View:     view,
+		StoreOn:  s.storeEnabled(),
 	})
 }
 
@@ -45,21 +90,46 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	state := s.loadVideoState()
 	s.render(w, "watch.html", struct {
 		basePage
-		Video *media.Video
+		Video   *media.Video
+		State   videoState
+		StoreOn bool
 	}{
 		basePage: basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:    v,
+		State:    state,
+		StoreOn:  s.storeEnabled(),
 	})
 }
 
 // ---------- JSON API ----------
 
 func (s *Server) handleAPIList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	sortVal := q.Get("sort")
+	if !allowedSorts[sortVal] {
+		sortVal = ""
+	}
+	view := q.Get("view")
+	state := s.loadVideoState()
+	query := media.Query{Keyword: q.Get("q"), Sort: sortVal}
+	switch view {
+	case "favorites":
+		query.IDs = state.Favs
+	case "continue":
+		ids := make(map[string]bool, len(state.Progress))
+		for id := range state.Progress {
+			ids[id] = true
+		}
+		query.IDs = ids
+	}
+	videos := s.library.Query(query)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"count":  len(s.library.List()),
-		"videos": s.library.List(),
+		"count":  len(videos),
+		"total":  s.library.Len(),
+		"videos": videos,
 	})
 }
 
@@ -77,6 +147,16 @@ func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+	// 清理指向已删除视频的孤儿进度/收藏记录
+	if s.storeEnabled() {
+		existing := make(map[string]bool, n)
+		for _, v := range s.library.List() {
+			existing[v.ID] = true
+		}
+		if err := s.store.Prune(existing); err != nil {
+			log.Printf("清理孤儿持久化记录失败: %v", err)
+		}
 	}
 	log.Printf("重新扫描完成，索引视频 %d 个", n)
 	writeJSON(w, http.StatusOK, map[string]any{"indexed": n})

@@ -10,7 +10,7 @@
   <header class="site-header">
     <h1>🎬 {{.Title}}</h1>
     <div class="header-actions">
-      <span class="count">共 {{.Count}} 个视频</span>
+      <span class="count">共 {{.Total}} 个视频</span>
       <button id="rescan-btn" type="button">重新扫描</button>
       {{if .AuthEnabled}}
       <form method="post" action="/logout" class="inline-form">
@@ -21,25 +21,79 @@
   </header>
 
   <main class="container">
+    <form class="toolbar" method="get" action="/">
+      {{if ne .View "all"}}<input type="hidden" name="view" value="{{.View}}">{{end}}
+      <div class="search-box">
+        <input type="search" name="q" value="{{.Query}}" placeholder="搜索文件名或路径…" aria-label="搜索">
+        <button type="submit">搜索</button>
+        {{if .Query}}<a class="clear-search" href="/?view={{.View}}">清除</a>{{end}}
+      </div>
+      <label class="sort-box">排序
+        <select name="sort" onchange="this.form.submit()">
+          <option value="" {{if eq .Sort ""}}selected{{end}}>默认（路径）</option>
+          <option value="name" {{if eq .Sort "name"}}selected{{end}}>名称</option>
+          <option value="newest" {{if eq .Sort "newest"}}selected{{end}}>最新修改</option>
+          <option value="oldest" {{if eq .Sort "oldest"}}selected{{end}}>最旧修改</option>
+          <option value="size" {{if eq .Sort "size"}}selected{{end}}>体积最大</option>
+        </select>
+      </label>
+    </form>
+
+    {{if .StoreOn}}
+    <nav class="view-tabs" aria-label="视图切换">
+      <a href="/?q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "all"}}active{{end}}">全部</a>
+      <a href="/?view=continue&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "continue"}}active{{end}}">继续观看</a>
+      <a href="/?view=favorites&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "favorites"}}active{{end}}">⭐ 收藏</a>
+    </nav>
+    {{end}}
+
     {{if .Videos}}
     <div class="video-grid">
       {{range .Videos}}
-      <a class="video-card" href="/watch/{{.ID}}">
-        <div class="thumb-wrap">
-          <img class="thumb" src="/thumb/{{.ID}}" alt="{{.Name}}" loading="lazy">
-          <span class="ext-badge">{{.Ext}}</span>
-        </div>
-        <div class="meta">
-          <h2 class="video-name" title="{{.RelPath}}">{{.Name}}</h2>
-          <p class="video-path">{{.RelPath}}</p>
-        </div>
-      </a>
+      {{$p := index $.State.Progress .ID}}
+      <div class="video-card-wrap">
+        <a class="video-card" href="/watch/{{.ID}}">
+          <div class="thumb-wrap">
+            <img class="thumb" src="/thumb/{{.ID}}" alt="{{.Name}}" loading="lazy">
+            <span class="ext-badge">{{.Ext}}</span>
+            {{if index $.State.Favs .ID}}<span class="fav-badge" title="已收藏">⭐</span>{{end}}
+            {{if hasProgress $p.Position $p.Duration}}
+            <div class="progress-bar" title="已看到 {{formatDuration $p.Position}} / {{formatDuration $p.Duration}}">
+              <div class="progress-fill" style="width: {{progressPercent $p.Position $p.Duration}}%"></div>
+            </div>
+            {{end}}
+          </div>
+          <div class="meta">
+            <h2 class="video-name" title="{{.RelPath}}">{{.Name}}</h2>
+            <p class="video-path">{{.RelPath}}</p>
+            {{if hasProgress $p.Position $p.Duration}}
+            <p class="resume-hint">▶ 看到 {{formatDuration $p.Position}}{{if gt $p.Duration 0.0}} / {{formatDuration $p.Duration}}{{end}}</p>
+            {{end}}
+          </div>
+        </a>
+        {{if $.StoreOn}}
+        <button type="button" class="fav-toggle {{if index $.State.Favs .ID}}is-fav{{end}}"
+                data-id="{{.ID}}" data-fav="{{if index $.State.Favs .ID}}true{{else}}false{{end}}"
+                title="{{if index $.State.Favs .ID}}取消收藏{{else}}收藏{{end}}"
+                aria-label="收藏切换">☆</button>
+        {{end}}
+      </div>
       {{end}}
     </div>
     {{else}}
     <div class="empty">
+      {{if .Query}}
+      <p>没有找到与「{{.Query}}」匹配的视频。</p>
+      {{else if eq .View "favorites"}}
+      <p>还没有收藏的视频。</p>
+      <p class="hint">在视频卡片右上角点击 ☆，或在播放页点击「收藏」即可加入。</p>
+      {{else if eq .View "continue"}}
+      <p>还没有播放记录。</p>
+      <p class="hint">打开任意视频播放后，这里会显示「继续观看」入口。</p>
+      {{else}}
       <p>媒体目录中还没有视频。</p>
       <p class="hint">把视频文件放入挂载的 <code>MEDIA_DIR</code> 目录，然后点击右上角「重新扫描」。</p>
+      {{end}}
     </div>
     {{end}}
   </main>
@@ -49,6 +103,7 @@
   </footer>
 
   <script>
+    // 重新扫描
     document.getElementById('rescan-btn')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget;
       btn.disabled = true;
@@ -64,6 +119,33 @@
         btn.disabled = false;
         btn.textContent = '重新扫描';
       }
+    });
+
+    // 卡片上的收藏切换
+    document.querySelectorAll('.fav-toggle').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const id = btn.dataset.id;
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/v1/videos/' + id + '/favorite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}) // 无 favorite 字段 → 服务端 toggle
+          });
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); return; }
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          btn.dataset.fav = String(data.favorite);
+          btn.classList.toggle('is-fav', data.favorite);
+          btn.title = data.favorite ? '取消收藏' : '收藏';
+        } catch (err) {
+          alert('收藏操作失败: ' + err);
+        } finally {
+          btn.disabled = false;
+        }
+      });
     });
   </script>
 </body>

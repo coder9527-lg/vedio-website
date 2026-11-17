@@ -9,23 +9,44 @@
 <body class="watch-page">
   <header class="site-header">
     <h1><a href="/" class="back-link">← 返回视频库</a></h1>
-    {{if .AuthEnabled}}
-    <form method="post" action="/logout" class="inline-form">
-      <button type="submit" class="btn-secondary">退出登录</button>
-    </form>
-    {{end}}
+    <div class="header-actions">
+      {{if .StoreOn}}
+      <button type="button" id="fav-btn" class="btn-secondary"
+              data-id="{{.Video.ID}}"
+              data-fav="{{if index .State.Favs .Video.ID}}true{{else}}false{{end}}">
+        {{if index .State.Favs .Video.ID}}⭐ 已收藏{{else}}☆ 收藏{{end}}
+      </button>
+      {{end}}
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
   </header>
 
   <main class="container watch-container">
     <h2 class="watch-title" title="{{.Video.RelPath}}">{{.Video.Name}}</h2>
     <div class="player-wrap">
-      <video controls preload="metadata" playsinline
+      <video id="player" controls preload="metadata" playsinline
              poster="/thumb/{{.Video.ID}}"
              src="/stream/{{.Video.ID}}">
         你的浏览器不支持 HTML5 视频播放，可
         <a href="/stream/{{.Video.ID}}?download=1">下载文件</a> 后播放。
       </video>
     </div>
+
+    {{if .StoreOn}}
+    {{$p := index .State.Progress .Video.ID}}
+    <p class="save-hint" id="save-hint" aria-live="polite">
+      {{if hasProgress $p.Position $p.Duration}}
+      上次看到 {{formatDuration $p.Position}}，正在为你续播…
+      {{else}}
+      播放进度会自动保存
+      {{end}}
+    </p>
+    {{end}}
+
     <dl class="info-list">
       <div><dt>路径</dt><dd>{{.Video.RelPath}}</dd></div>
       <div><dt>格式</dt><dd>{{.Video.Ext}}</dd></div>
@@ -33,5 +54,112 @@
     </dl>
     <a class="download-btn" href="/stream/{{.Video.ID}}?download=1">⬇ 下载原文件</a>
   </main>
+
+  {{if .StoreOn}}
+  <script>
+    (() => {
+      const videoId = {{printf "%q" .Video.ID}};
+      const player = document.getElementById('player');
+      const saveHint = document.getElementById('save-hint');
+      const favBtn = document.getElementById('fav-btn');
+
+      // ---- 播放进度：上报 / 续播 ----
+      const SAVE_INTERVAL = 5;   // 每 5 秒上报一次
+      const SEEK_MIN_DELTA = 3; // 与已保存位置相差超过 3 秒才跳转，避免抖动
+      let lastSaved = 0;
+      let resumeDone = false;
+
+      async function saveProgress() {
+        if (!player.currentTime || player.currentTime < 1) return;
+        try {
+          const res = await fetch('/api/v1/videos/' + videoId + '/progress', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              position: player.currentTime,
+              duration: player.duration || 0
+            })
+          });
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (res.ok) {
+            lastSaved = player.currentTime;
+            saveHint.textContent = '进度已保存 · ' + new Date().toLocaleTimeString();
+          }
+        } catch (err) {
+          // 网络抖动不打断播放，下一个周期重试
+          console.warn('保存播放进度失败', err);
+        }
+      }
+
+      // 拉取上次进度并续播（等 metadata 就绪才能 seek）
+      async function resume() {
+        if (resumeDone) return;
+        resumeDone = true;
+        try {
+          const res = await fetch('/api/v1/videos/' + videoId + '/progress');
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (!res.ok) return;
+          const data = await res.json();
+          const p = data.progress;
+          if (!p || p.position < 5) return;
+          // 已看到片尾 95% 以上视为看完，从头播放
+          if (p.duration > 0 && p.position / p.duration >= 0.95) return;
+          const doSeek = () => {
+            if (Math.abs(player.currentTime - p.position) > SEEK_MIN_DELTA ||
+                player.currentTime < 1) {
+              player.currentTime = p.position;
+            }
+          };
+          if (player.readyState >= 1) doSeek();
+          else player.addEventListener('loadedmetadata', doSeek, { once: true });
+        } catch (err) {
+          console.warn('续播失败', err);
+        }
+      }
+      resume();
+
+      // 定时上报
+      setInterval(() => {
+        if (!player.paused && player.currentTime - lastSaved >= SAVE_INTERVAL) {
+          saveProgress();
+        }
+      }, 1000);
+
+      // 暂停 / 跳到结尾 / 关闭页面前各保存一次
+      player.addEventListener('pause', () => {
+        if (player.currentTime - lastSaved >= 1) saveProgress();
+      });
+      player.addEventListener('ended', saveProgress);
+      window.addEventListener('pagehide', saveProgress);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') saveProgress();
+      });
+
+      // ---- 收藏切换 ----
+      if (favBtn) {
+        favBtn.addEventListener('click', async () => {
+          favBtn.disabled = true;
+          try {
+            const res = await fetch('/api/v1/videos/' + videoId + '/favorite', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}) // 无 favorite 字段 → 服务端 toggle
+            });
+            if (res.status === 401) { location.href = '/login'; return; }
+            if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); return; }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            favBtn.dataset.fav = String(data.favorite);
+            favBtn.textContent = data.favorite ? '⭐ 已收藏' : '☆ 收藏';
+          } catch (err) {
+            alert('收藏操作失败: ' + err);
+          } finally {
+            favBtn.disabled = false;
+          }
+        });
+      }
+    })();
+  </script>
+  {{end}}
 </body>
 </html>

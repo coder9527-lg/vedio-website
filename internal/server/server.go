@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder9527-lg/vedio-website/internal/auth"
 	"github.com/coder9527-lg/vedio-website/internal/media"
+	"github.com/coder9527-lg/vedio-website/internal/store"
 )
 
 //go:embed templates static
@@ -19,24 +20,29 @@ var assets embed.FS
 type Server struct {
 	library       *media.Library
 	thumbs        *media.Thumbnailer
+	store         *store.Store // nil 表示未启用持久化（播放进度/收藏不可用）
 	tmpl          *template.Template
 	authenticator *auth.Authenticator // nil 表示未开启访问密码
 	cookieSecure  bool
 }
 
-func New(library *media.Library, thumbs *media.Thumbnailer, authenticator *auth.Authenticator, cookieSecure bool) (*Server, error) {
-	tmpl, err := template.ParseFS(assets, "templates/*.html")
+func New(library *media.Library, thumbs *media.Thumbnailer, st *store.Store, authenticator *auth.Authenticator, cookieSecure bool) (*Server, error) {
+	tmpl, err := template.New("").Funcs(tmplFuncs).ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
 	return &Server{
 		library:       library,
 		thumbs:        thumbs,
+		store:         st,
 		tmpl:          tmpl,
 		authenticator: authenticator,
 		cookieSecure:  cookieSecure,
 	}, nil
 }
+
+// storeEnabled 判断是否启用了 SQLite 持久化。
+func (s *Server) storeEnabled() bool { return s.store != nil }
 
 // authEnabled 供模板与处理器判断是否展示登录相关元素。
 func (s *Server) authEnabled() bool { return s.authenticator != nil }
@@ -84,6 +90,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/videos", s.handleAPIList)
 	mux.HandleFunc("GET /api/v1/videos/{id}", s.handleAPIGet)
 	mux.HandleFunc("POST /api/v1/rescan", s.handleRescan)
+
+	// 播放进度与收藏（仅在启用持久化时可用，否则返回 503）
+	mux.HandleFunc("GET /api/v1/progress", s.handleProgressList)
+	mux.HandleFunc("PUT /api/v1/videos/{id}/progress", s.handleProgressPut)
+	mux.HandleFunc("GET /api/v1/videos/{id}/progress", s.handleProgressGet)
+	mux.HandleFunc("DELETE /api/v1/videos/{id}/progress", s.handleProgressDelete)
+	mux.HandleFunc("GET /api/v1/favorites", s.handleFavoriteList)
+	mux.HandleFunc("POST /api/v1/videos/{id}/favorite", s.handleFavoriteSet)
+	mux.HandleFunc("GET /api/v1/videos/{id}/favorite", s.handleFavoriteGet)
 	mux.HandleFunc("GET /stream/{id}", s.handleStream)
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)

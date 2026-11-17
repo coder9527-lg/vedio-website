@@ -131,6 +131,95 @@ func TestLibraryUpsert(t *testing.T) {
 	}
 }
 
+func TestLibraryQueryKeyword(t *testing.T) {
+	lib, _ := newTestLibrary(t, map[string]string{
+		"movies/Alpha.mp4":    "x",
+		"movies/beta.mkv":     "y",
+		"clips/alpha-cut.mov": "z",
+	})
+	if _, err := lib.Scan(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := lib.Query(Query{Keyword: "alpha"})
+	if len(got) != 2 {
+		t.Fatalf("关键字 alpha 期望命中 2 个，实际 %d", len(got))
+	}
+
+	// 按路径片段搜索
+	if got := lib.Query(Query{Keyword: "clips"}); len(got) != 1 {
+		t.Fatalf("路径关键字期望命中 1 个，实际 %d", len(got))
+	}
+
+	// 大小写不敏感、无命中
+	if got := lib.Query(Query{Keyword: "GAMMA"}); len(got) != 0 {
+		t.Fatalf("无命中关键字应返回空，实际 %d", len(got))
+	}
+}
+
+func TestLibraryQuerySort(t *testing.T) {
+	lib, root := newTestLibrary(t, map[string]string{
+		"a.mp4": "aaa", // 3 字节
+		"b.mp4": "b",   // 1 字节
+	})
+	if _, err := lib.Scan(); err != nil {
+		t.Fatal(err)
+	}
+
+	bySize := lib.Query(Query{Sort: "size"})
+	if len(bySize) != 2 || bySize[0].Name != "a" {
+		t.Fatalf("按体积倒序错误: %+v", bySize)
+	}
+
+	byName := lib.Query(Query{Sort: "name"})
+	if byName[0].Name != "a" || byName[1].Name != "b" {
+		t.Fatalf("按名称排序错误: %+v", byName)
+	}
+
+	byNewest := lib.Query(Query{Sort: "newest"})
+	if len(byNewest) != 2 {
+		t.Fatalf("newest 返回数量错误: %d", len(byNewest))
+	}
+
+	// 修改 a.mp4 后，newest 首位应为 a
+	p := filepath.Join(root, "a.mp4")
+	if err := os.WriteFile(p, []byte("aaaa-new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := lib.Upsert(p); !ok {
+		t.Fatal("Upsert 失败")
+	}
+	byNewest = lib.Query(Query{Sort: "newest"})
+	if byNewest[0].Name != "a" {
+		t.Fatalf("更新后 newest 首位应为 a，实际 %s", byNewest[0].Name)
+	}
+}
+
+func TestLibraryQueryIDsAndLimit(t *testing.T) {
+	lib, _ := newTestLibrary(t, map[string]string{
+		"a.mp4": "x", "b.mp4": "y", "c.mp4": "z",
+	})
+	if _, err := lib.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	all := lib.List()
+	ids := map[string]bool{all[0].ID: true, all[2].ID: true}
+
+	got := lib.Query(Query{IDs: ids})
+	if len(got) != 2 {
+		t.Fatalf("IDs 过滤期望 2 个，实际 %d", len(got))
+	}
+	for _, v := range got {
+		if !ids[v.ID] {
+			t.Errorf("返回了不在 IDs 中的视频: %s", v.ID)
+		}
+	}
+
+	if got := lib.Query(Query{Limit: 1}); len(got) != 1 {
+		t.Fatalf("Limit=1 应只返回 1 个，实际 %d", len(got))
+	}
+}
+
 func TestLibraryRemove(t *testing.T) {
 	lib, root := newTestLibrary(t, map[string]string{
 		"a.mp4":      "x",
