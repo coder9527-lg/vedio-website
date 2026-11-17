@@ -38,6 +38,24 @@ func main() {
 		log.Printf("警告: 未找到 ffmpeg(%s)，缩略图将使用占位图", cfg.FFmpeg)
 	}
 
+	// HLS 在线转码（可选）：ffmpeg 缺失或显式关闭时降级，不影响其他功能
+	var transcoder *media.Transcoder
+	if cfg.TranscodeEnabled {
+		tc, err := media.NewTranscoder(cfg.TranscodeDir, cfg.FFmpeg, cfg.TranscodeMax, cfg.TranscodeIdleTimeout)
+		if err != nil {
+			log.Printf("警告: 初始化转码目录失败: %v，HLS 转码不可用", err)
+		} else if !tc.Available() {
+			log.Printf("警告: ffmpeg 不可用，HLS 在线转码功能关闭")
+			tc = nil
+		} else {
+			transcoder = tc
+			log.Printf("HLS 在线转码已开启（并发上限 %d，空闲超时 %s，缓存目录 %s）",
+				cfg.TranscodeMax, cfg.TranscodeIdleTimeout, cfg.TranscodeDir)
+		}
+	} else {
+		log.Println("HLS 在线转码已关闭（TRANSCODE_ENABLED=false）")
+	}
+
 	// 文件监听：媒体目录变更后自动增量更新索引
 	var watcher *media.Watcher
 	if cfg.WatchEnabled {
@@ -96,7 +114,7 @@ func main() {
 		}
 	}
 
-	srv, err := server.New(library, thumbs, db, authenticator, cfg.AuthCookieSecure)
+	srv, err := server.New(library, thumbs, transcoder, db, authenticator, cfg.AuthCookieSecure)
 	if err != nil {
 		log.Fatalf("初始化服务失败: %v", err)
 	}
@@ -137,6 +155,10 @@ func main() {
 		if err := db.Close(); err != nil {
 			log.Printf("关闭数据库失败: %v", err)
 		}
+	}
+	if transcoder != nil {
+		transcoder.Close()
+		log.Println("转码器已关闭")
 	}
 	log.Println("服务已退出")
 }

@@ -261,6 +261,31 @@ button:disabled { opacity: .6; cursor: wait; }
   font-size: 13px;
 }
 
+/* 播放页：播放模式切换（原画 / HLS 转码） */
+.player-modes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.mode-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 6px 14px;
+}
+.mode-btn:hover { border-color: var(--accent); color: var(--accent); }
+.mode-btn.active {
+  background: rgba(56, 189, 248, .15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.transcode-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* 移动端适配 */
 @media (max-width: 640px) {
   .site-header { padding: 12px 16px; }

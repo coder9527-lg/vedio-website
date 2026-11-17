@@ -27,6 +27,13 @@
 
   <main class="container watch-container">
     <h2 class="watch-title" title="{{.Video.RelPath}}">{{.Video.Name}}</h2>
+    {{if .TranscodeOn}}
+    <div class="player-modes" role="tablist" aria-label="播放模式">
+      <button type="button" id="mode-direct" class="mode-btn active" role="tab">原画直链</button>
+      <button type="button" id="mode-hls" class="mode-btn" role="tab">🔄 转码播放（HLS）</button>
+      <span class="transcode-status" id="transcode-status" aria-live="polite"></span>
+    </div>
+    {{end}}
     <div class="player-wrap">
       <video id="player" controls preload="metadata" playsinline
              poster="/thumb/{{.Video.ID}}"
@@ -54,6 +61,145 @@
     </dl>
     <a class="download-btn" href="/stream/{{.Video.ID}}?download=1">⬇ 下载原文件</a>
   </main>
+
+  {{if .TranscodeOn}}
+  <script src="/static/js/hls.min.js"></script>
+  <script>
+    (() => {
+      const videoId = {{printf "%q" .Video.ID}};
+      const nativePlayable = {{.NativePlayable}};
+      const player = document.getElementById('player');
+      const directSrc = '/stream/' + videoId;
+      const hlsURL = '/hls/' + videoId + '/index.m3u8';
+      const statusAPI = '/api/v1/videos/' + videoId + '/transcode';
+      const modeDirect = document.getElementById('mode-direct');
+      const modeHls = document.getElementById('mode-hls');
+      const statusEl = document.getElementById('transcode-status');
+      let hls = null;
+      let pollTimer = null;
+      let mode = 'direct';
+
+      function setStatus(text) { if (statusEl) statusEl.textContent = text || ''; }
+      function setActiveMode(m) {
+        mode = m;
+        modeDirect.classList.toggle('active', m === 'direct');
+        modeHls.classList.toggle('active', m === 'hls');
+      }
+      function stopPolling() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      }
+      function destroyHls() {
+        stopPolling();
+        if (hls) { hls.destroy(); hls = null; }
+      }
+
+      // clearStatus=false 用于转码失败后的自动回退，保留错误提示
+      function useDirect(clearStatus = true) {
+        destroyHls();
+        player.removeAttribute('src');
+        player.src = directSrc;
+        player.load();
+        setActiveMode('direct');
+        if (clearStatus) setStatus('');
+      }
+
+      function useHls() {
+        setActiveMode('hls');
+        setStatus('正在启动转码…');
+        // 先通知后端启动/复用转码会话，再轮询等待 m3u8 产出
+        pollTranscodeStatus();
+      }
+
+      async function pollTranscodeStatus() {
+        stopPolling();
+        const tick = async () => {
+          try {
+            const res = await fetch(statusAPI);
+            if (res.status === 401) { location.href = '/login'; return; }
+            if (res.status === 429) { setStatus('转码任务排队中，稍候…'); return; }
+            if (!res.ok) {
+              setStatus('转码启动失败，可切回原画直链或下载播放');
+              stopPolling();
+              return;
+            }
+            const data = await res.json();
+            if (data.state === 'failed') {
+              setStatus('转码失败（可查看转码目录 ffmpeg.log），已切回原画直链');
+              stopPolling();
+              useDirect(false); // 保留上面的错误提示
+              return;
+            }
+            if (data.hasPlaylist) {
+              stopPolling();
+              attachHls();
+              return;
+            }
+            setStatus('转码中… 已生成 ' + (data.segments || 0) + ' 个分片');
+          } catch (err) {
+            setStatus('网络异常，重试中…');
+          }
+        };
+        tick();
+        pollTimer = setInterval(tick, 2000);
+      }
+
+      function attachHls() {
+        const resumePos = player.currentTime || 0;
+        const wasPlaying = !player.paused;
+        player.pause();
+        player.removeAttribute('src');
+
+        const onReady = () => {
+          setStatus('转码播放中');
+          if (resumePos > 1) player.currentTime = resumePos;
+          if (wasPlaying) player.play().catch(() => {});
+        };
+
+        if (window.Hls && Hls.isSupported()) {
+          if (hls) hls.destroy();
+          hls = new Hls({
+            // m3u8 是动态追加的，缩短重试与加载参数让新分片更快接上
+            manifestLoadingMaxRetry: 8,
+            manifestLoadingRetryDelay: 1000,
+            levelLoadingMaxRetry: 8,
+            fragLoadingMaxRetry: 12,
+            fragLoadingRetryDelay: 800,
+          });
+          hls.on(Hls.Events.MANIFEST_PARSED, onReady);
+          hls.on(Hls.Events.ERROR, (_evt, data) => {
+            if (!data.fatal) return;
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              setStatus('等待转码分片…');
+              hls.startLoad();
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              hls.recoverMediaError();
+            } else {
+              setStatus('HLS 播放出错，切回原画直链');
+              useDirect(false);
+            }
+          });
+          hls.loadSource(hlsURL);
+          hls.attachMedia(player);
+        } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+          // Safari 等原生 HLS
+          player.src = hlsURL;
+          player.addEventListener('loadedmetadata', onReady, { once: true });
+        } else {
+          setStatus('当前浏览器不支持 HLS 播放，请使用原画直链');
+          useDirect();
+        }
+      }
+
+      modeDirect.addEventListener('click', () => useDirect());
+      modeHls.addEventListener('click', useHls);
+
+      // 非浏览器友好格式（MKV/FLV/AVI 等）默认尝试转码播放
+      if (!nativePlayable) {
+        useHls();
+      }
+    })();
+  </script>
+  {{end}}
 
   {{if .StoreOn}}
   <script>

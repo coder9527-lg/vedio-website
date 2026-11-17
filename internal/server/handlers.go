@@ -93,14 +93,18 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	state := s.loadVideoState()
 	s.render(w, "watch.html", struct {
 		basePage
-		Video   *media.Video
-		State   videoState
-		StoreOn bool
+		Video          *media.Video
+		State          videoState
+		StoreOn        bool
+		TranscodeOn    bool
+		NativePlayable bool
 	}{
-		basePage: basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
-		Video:    v,
-		State:    state,
-		StoreOn:  s.storeEnabled(),
+		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
+		Video:          v,
+		State:          state,
+		StoreOn:        s.storeEnabled(),
+		TranscodeOn:    s.transcodeEnabled(),
+		NativePlayable: isNativePlayable(v.Ext),
 	})
 }
 
@@ -269,6 +273,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil && !errors.Is(err, http.ErrHandlerTimeout) {
 		log.Printf("写 JSON 响应失败: %v", err)
+	}
+}
+
+// isNativePlayable 判断该容器在主流浏览器中通常可直接用 <video> 播放
+// （注意 MKV 即使含 H.264 也常因容器支持问题失败，因此归入转码候选）。
+func isNativePlayable(ext string) bool {
+	switch ext {
+	case ".mp4", ".m4v", ".webm", ".mov":
+		return true
+	default:
+		return false
 	}
 }
 

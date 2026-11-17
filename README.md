@@ -8,6 +8,7 @@
 - 👀 **文件监听自动入库**：基于 fsnotify 递归监听，新增/删除/重命名即时增量更新；事件防抖避免拷入半截文件，NAS 晚挂载自动重试，另支持定时全量兜底（NFS/SMB 事件丢失场景）
 - ⏯️ **在线播放 + 进度条拖拽**：基于 HTTP Range 的流式传输，浏览器原生播放器
 - 🖼️ **ffmpeg 缩略图**：首次访问按需抽帧并缓存，不阻塞扫描；无 ffmpeg 时自动降级占位图
+- 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
 - 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
@@ -23,7 +24,7 @@ vedio-website/
 ├── internal/
 │   ├── auth/              # 访问密码：HMAC 签名 Cookie、登录限流
 │   ├── config/            # 环境变量配置
-│   ├── media/             # 媒体库扫描、查询排序、ffmpeg 缩略图
+│   ├── media/             # 媒体库扫描、查询排序、ffmpeg 缩略图、HLS 按需转码
 │   ├── server/            # HTTP 路由、API、页面模板与静态资源（embed 内嵌）
 │   └── store/             # SQLite 持久化：播放进度、收藏（modernc 纯 Go 驱动）
 ├── docker/
@@ -69,6 +70,10 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `MEDIA_DIR` | `/media` | 视频媒体目录 |
 | `THUMB_DIR` | `/data/thumbnails` | 缩略图缓存目录 |
 | `FFMPEG_BIN` | `ffmpeg` | ffmpeg 可执行文件路径 |
+| `TRANSCODE_ENABLED` | `true` | 是否启用 HLS 在线转码，设为 `false` 或 ffmpeg 缺失时自动隐藏入口 |
+| `TRANSCODE_DIR` | `/data/transcode` | HLS 分片（m3u8/ts）缓存目录，位于持久化卷内；启动时清空残留 |
+| `TRANSCODE_MAX` | `2` | 同时运行的 ffmpeg 转码任务上限，超出的任务排队，按 NAS CPU 性能调整 |
+| `TRANSCODE_IDLE_TIMEOUT` | `30m` | 会话无人访问后多久停止转码进程（已产出分片保留，再次观看自动重转） |
 | `DB_PATH` | 空（关闭） | SQLite 数据库文件路径（如 `/data/vedio.db`），开启播放进度与收藏；留空禁用持久化，接口返回 503 且页面隐藏相关入口 |
 | `PUID` / `PGID` | `0` / `0` | 容器内运行用户 UID/GID（NAS 权限适配） |
 | `TZ` | `Asia/Shanghai` | 时区 |
@@ -91,6 +96,9 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | POST | `/api/v1/rescan` | 重新扫描媒体目录（自动清理已删除视频的孤儿进度/收藏） |
 | GET | `/stream/{id}` | 视频流（支持 Range；加 `?download=1` 触发下载） |
 | GET | `/thumb/{id}` | 缩略图（自动生成并缓存） |
+| GET | `/api/v1/videos/{id}/transcode` | 启动/查询 HLS 转码会话状态（排队返回 429，前端轮询） |
+| GET | `/hls/{id}/index.m3u8` | HLS 播放列表（转码中实时追加，`no-store`） |
+| GET | `/hls/{id}/{seg}` | HLS mpegts 分片（文件名白名单校验，防路径穿越） |
 | GET / PUT / DELETE | `/api/v1/videos/{id}/progress` | 查询 / 上报 / 清除播放进度（需 `DB_PATH`） |
 | GET | `/api/v1/progress` | 全部播放进度（需 `DB_PATH`） |
 | GET / POST | `/api/v1/videos/{id}/favorite` | 查询收藏状态 / 收藏·取消·切换（POST 空体即 toggle，需 `DB_PATH`） |
@@ -132,6 +140,18 @@ environment:
 - 数据库以 WAL 模式运行，重扫后自动清理指向已删除视频的孤儿记录；
 - 不配置 `DB_PATH` 时功能整体降级：相关 API 返回 `503`，页面自动隐藏收藏按钮与视图 tab，其余功能不受影响。
 
+## HLS 在线转码（可选）
+
+浏览器通常只能直解 MP4(H.264/AAC) 与 WebM，MKV、HEVC、FLV、AVI 等格式会黑屏或只有声音。开启转码后，播放页提供「原画直链 / 转码播放」两种模式：
+
+- **按需启动、边转边播**：首次点击转码播放才拉起 ffmpeg，输出 HLS（`event` 语义播放列表实时增长，完成后补 `EXT-X-ENDLIST`），前端用内嵌的 hls.js（Safari 走原生 HLS）轮询状态并自动接管播放；
+- **并发与排队**：`TRANSCODE_MAX` 限制同时运行的转码进程数，槽位满时新任务入队，API 立即返回 `429`，前端显示「排队中」并继续轮询，不会重复入队；
+- **空闲回收与重转**：播放列表/分片/状态请求都会刷新会话的最近访问时间，超过 `TRANSCODE_IDLE_TIMEOUT` 无人观看即停止 ffmpeg 释放 CPU，已产出分片保留；再次观看时清空旧目录全量重转，分片从 0 重新编号，避免新旧列表混用；
+- **安全与缓存**：分片名严格白名单（`seg-<5 位数字>.ts`），杜绝路径穿越与日志读取；m3u8 禁缓存（动态内容），分片长缓存（内容不变）；
+- **降级策略**：未安装 ffmpeg 或 `TRANSCODE_ENABLED=false` 时播放页自动隐藏转码入口，原画直链、下载等其他功能不受影响；转码失败可随时切回原画或下载原文件。
+
+> 转码是 CPU 密集型任务，低配 NAS 建议把 `TRANSCODE_MAX` 设为 `1`，并优先在局域网内使用。
+
 ## 设计说明
 
 - **存储可选、默认无数据库**：视频索引保存在内存中，启动时全量扫描，运行期由 fsnotify 监听增量维护（可选定时全量兜底）；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。只有显式设置 `DB_PATH` 才启用 SQLite，用于播放进度与收藏。
@@ -143,6 +163,6 @@ environment:
 - [x] 登录认证 / 简单访问密码（HMAC Cookie、失败限流，见 `AUTH_PASSWORD`）
 - [x] SQLite 持久化：播放进度（自动上报 + 断点续播）、收藏、搜索/排序/视图（见 `DB_PATH`）
 - [x] 文件监听（fsnotify）自动增量扫描（含防抖、晚挂载重试、定时全量兜底）
-- [ ] ffmpeg HLS 在线转码，解决 MKV/小众编码播放问题
-- [ ] 字幕自动挂载与多音轨支持
+- [x] ffmpeg HLS 在线转码（按需转 H.264/AAC、并发排队、空闲回收，见 `TRANSCODE_*`）
+- [ ] 字幕自动挂载与多音轨支持（当前转码取第一路音视频并丢弃字幕轨）
 - [ ] 海报/元信息刮削（NFO、TMDB）

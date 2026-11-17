@@ -21,6 +21,7 @@ ENV TZ=Asia/Shanghai \
     PORT=8080 \
     MEDIA_DIR=/media \
     THUMB_DIR=/data/thumbnails \
+    TRANSCODE_DIR=/data/transcode \
     DB_PATH=/data/vedio.db
 
 WORKDIR /app

@@ -20,13 +20,14 @@ var assets embed.FS
 type Server struct {
 	library       *media.Library
 	thumbs        *media.Thumbnailer
-	store         *store.Store // nil 表示未启用持久化（播放进度/收藏不可用）
+	transcoder    *media.Transcoder // nil 表示未启用 HLS 在线转码
+	store         *store.Store      // nil 表示未启用持久化（播放进度/收藏不可用）
 	tmpl          *template.Template
 	authenticator *auth.Authenticator // nil 表示未开启访问密码
 	cookieSecure  bool
 }
 
-func New(library *media.Library, thumbs *media.Thumbnailer, st *store.Store, authenticator *auth.Authenticator, cookieSecure bool) (*Server, error) {
+func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Transcoder, st *store.Store, authenticator *auth.Authenticator, cookieSecure bool) (*Server, error) {
 	tmpl, err := template.New("").Funcs(tmplFuncs).ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, err
@@ -34,6 +35,7 @@ func New(library *media.Library, thumbs *media.Thumbnailer, st *store.Store, aut
 	return &Server{
 		library:       library,
 		thumbs:        thumbs,
+		transcoder:    transcoder,
 		store:         st,
 		tmpl:          tmpl,
 		authenticator: authenticator,
@@ -102,6 +104,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /stream/{id}", s.handleStream)
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)
+
+	// HLS 在线转码（可选）：状态轮询、m3u8 播放列表、mpegts 分片
+	mux.HandleFunc("GET /api/v1/videos/{id}/transcode", s.handleTranscodeStatus)
+	mux.HandleFunc("GET /hls/{id}/index.m3u8", s.handleHLSPlaylist)
+	mux.HandleFunc("GET /hls/{id}/{seg}", s.handleHLSSegment)
 
 	// 认证相关路由（未开启密码时 /login 直接回首页）
 	mux.HandleFunc("GET /login", s.handleLoginPage)

@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -13,6 +14,12 @@ type Config struct {
 	ThumbDir string // 缩略图缓存目录
 	FFmpeg   string // ffmpeg 可执行文件路径
 	DBPath   string // SQLite 数据库路径（播放进度/收藏），留空则禁用持久化
+
+	// HLS 在线转码：把 MKV/HEVC 等浏览器不支持的格式按需转成 H.264/AAC
+	TranscodeEnabled     bool
+	TranscodeDir         string        // HLS 分片缓存目录
+	TranscodeMax         int           // 同时运行的 ffmpeg 转码任务上限
+	TranscodeIdleTimeout time.Duration // 无客户端后多久停止转码进程（分片保留）
 
 	WatchEnabled   bool          // 是否启用文件监听自动扫描
 	WatchDebounce  time.Duration // 文件事件防抖窗口
@@ -41,6 +48,11 @@ func Load() *Config {
 		FFmpeg:   getenv("FFMPEG_BIN", "ffmpeg"),
 		DBPath:   os.Getenv("DB_PATH"),
 
+		TranscodeEnabled:     getenv("TRANSCODE_ENABLED", "true") != "false",
+		TranscodeDir:         getenv("TRANSCODE_DIR", "/data/transcode"),
+		TranscodeMax:         parseInt("TRANSCODE_MAX", 2),
+		TranscodeIdleTimeout: parseDuration("TRANSCODE_IDLE_TIMEOUT", 30*time.Minute),
+
 		WatchEnabled:   getenv("WATCH_ENABLED", "true") != "false",
 		WatchDebounce:  parseDuration("WATCH_DEBOUNCE", 2*time.Second),
 		RescanInterval: parseDuration("RESCAN_INTERVAL", 0),
@@ -63,6 +75,19 @@ func Load() *Config {
 		log.Printf("警告: %s 不是目录，服务将以空库启动", cfg.MediaDir)
 	}
 	return cfg
+}
+
+func parseInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		log.Printf("警告: %s=%q 不是合法正整数，使用默认值 %d", key, raw, fallback)
+		return fallback
+	}
+	return n
 }
 
 func parseDuration(key string, fallback time.Duration) time.Duration {
