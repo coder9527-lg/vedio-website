@@ -56,6 +56,15 @@ func main() {
 		log.Println("HLS 在线转码已关闭（TRANSCODE_ENABLED=false）")
 	}
 
+	// 字幕转换缓存复用缩略图卷下的 subs 子目录；ffmpeg 缺失时仅 VTT 字幕可直接播放
+	subConverter, err := media.NewSubtitleConverter(filepath.Join(cfg.ThumbDir, "subs"), cfg.FFmpeg)
+	if err != nil {
+		log.Fatalf("初始化字幕缓存目录失败: %v", err)
+	}
+	if !subConverter.Available() {
+		log.Printf("警告: 未找到 ffmpeg(%s)，SRT/ASS 等字幕无法自动转换，仅 VTT 字幕可用", cfg.FFmpeg)
+	}
+
 	// 文件监听：媒体目录变更后自动增量更新索引
 	var watcher *media.Watcher
 	if cfg.WatchEnabled {
@@ -114,7 +123,7 @@ func main() {
 		}
 	}
 
-	srv, err := server.New(library, thumbs, transcoder, db, authenticator, cfg.AuthCookieSecure)
+	srv, err := server.New(library, thumbs, transcoder, subConverter, db, authenticator, cfg.AuthCookieSecure)
 	if err != nil {
 		log.Fatalf("初始化服务失败: %v", err)
 	}

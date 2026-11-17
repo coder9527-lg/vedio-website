@@ -43,6 +43,11 @@
       </video>
     </div>
 
+    <div class="subtitle-bar" id="subtitle-bar" hidden>
+      <span class="subtitle-label">字幕</span>
+      <div class="subtitle-options" id="subtitle-options"></div>
+    </div>
+
     {{if .StoreOn}}
     {{$p := index .State.Progress .Video.ID}}
     <p class="save-hint" id="save-hint" aria-live="polite">
@@ -307,5 +312,63 @@
     })();
   </script>
   {{end}}
+
+  <script>
+    // 外挂字幕：拉取字幕列表，动态挂载 <track> 并提供手动切换（不依赖持久化）
+    (() => {
+      const videoId = {{printf "%q" .Video.ID}};
+      const player = document.getElementById('player');
+      const bar = document.getElementById('subtitle-bar');
+      const options = document.getElementById('subtitle-options');
+
+      function selectTrack(index) {
+        // index === -1 表示关闭字幕；其余对应 textTracks 中的轨道顺序
+        for (let i = 0; i < player.textTracks.length; i++) {
+          player.textTracks[i].mode = (i === index) ? 'showing' : 'disabled';
+        }
+        options.querySelectorAll('.subtitle-chip').forEach((chip, i) => {
+          chip.classList.toggle('active', i - 1 === index); // 首个 chip 是“关闭”
+        });
+      }
+
+      function addChip(label, index, active) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'subtitle-chip' + (active ? ' active' : '');
+        chip.textContent = label;
+        chip.addEventListener('click', () => selectTrack(index));
+        options.appendChild(chip);
+      }
+
+      (async () => {
+        try {
+          const res = await fetch('/api/v1/videos/' + videoId + '/subtitles');
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (!res.ok) return;
+          const data = await res.json();
+          const subs = data.subtitles || [];
+          if (subs.length === 0) return;
+
+          subs.forEach((sub, i) => {
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+            track.label = sub.name;
+            track.srclang = sub.lang || 'und';
+            track.src = '/subtitles/' + videoId + '/' + sub.id;
+            if (sub.default) track.default = true;
+            player.appendChild(track);
+            // 默认轨道之外先禁用，避免浏览器自动选择非预期语言
+            player.textTracks[i].mode = sub.default ? 'showing' : 'disabled';
+            addChip(sub.name, i, !!sub.default);
+          });
+
+          addChip('关闭字幕', -1, !subs.some(s => s.default));
+          bar.hidden = false;
+        } catch (err) {
+          console.warn('加载字幕失败', err);
+        }
+      })();
+    })();
+  </script>
 </body>
 </html>

@@ -286,6 +286,40 @@ button:disabled { opacity: .6; cursor: wait; }
   font-size: 13px;
 }
 
+/* 播放页：外挂字幕切换条 */
+.subtitle-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.subtitle-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+.subtitle-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.subtitle-chip {
+  background: var(--card, #1f2937);
+  color: var(--text, #e5e7eb);
+  border: 1px solid var(--border, #374151);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.subtitle-chip:hover { border-color: var(--accent); }
+.subtitle-chip.active {
+  background: var(--accent);
+  color: #082f49;
+  border-color: var(--accent);
+}
+
 /* 移动端适配 */
 @media (max-width: 640px) {
   .site-header { padding: 12px 16px; }

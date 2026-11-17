@@ -45,13 +45,17 @@ func newPersistTestServer(t *testing.T) (*Server, *httptest.Server, string) {
 	if err != nil {
 		t.Fatalf("NewThumbnailer 失败: %v", err)
 	}
+	subs, err := media.NewSubtitleConverter(t.TempDir(), "ffmpeg")
+	if err != nil {
+		t.Fatalf("NewSubtitleConverter 失败: %v", err)
+	}
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("打开 store 失败: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	srv, err := New(lib, thumbs, nil, st, nil, false)
+	srv, err := New(lib, thumbs, nil, subs, st, nil, false)
 	if err != nil {
 		t.Fatalf("New 失败: %v", err)
 	}

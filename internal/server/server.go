@@ -21,13 +21,14 @@ type Server struct {
 	library       *media.Library
 	thumbs        *media.Thumbnailer
 	transcoder    *media.Transcoder // nil 表示未启用 HLS 在线转码
-	store         *store.Store      // nil 表示未启用持久化（播放进度/收藏不可用）
+	subs          *media.SubtitleConverter
+	store         *store.Store // nil 表示未启用持久化（播放进度/收藏不可用）
 	tmpl          *template.Template
 	authenticator *auth.Authenticator // nil 表示未开启访问密码
 	cookieSecure  bool
 }
 
-func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Transcoder, st *store.Store, authenticator *auth.Authenticator, cookieSecure bool) (*Server, error) {
+func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Transcoder, subs *media.SubtitleConverter, st *store.Store, authenticator *auth.Authenticator, cookieSecure bool) (*Server, error) {
 	tmpl, err := template.New("").Funcs(tmplFuncs).ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, err
@@ -36,6 +37,7 @@ func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Tr
 		library:       library,
 		thumbs:        thumbs,
 		transcoder:    transcoder,
+		subs:          subs,
 		store:         st,
 		tmpl:          tmpl,
 		authenticator: authenticator,
@@ -91,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /watch/{id}", s.handleWatch)
 	mux.HandleFunc("GET /api/v1/videos", s.handleAPIList)
 	mux.HandleFunc("GET /api/v1/videos/{id}", s.handleAPIGet)
+	mux.HandleFunc("GET /api/v1/videos/{id}/subtitles", s.handleSubtitleList)
 	mux.HandleFunc("POST /api/v1/rescan", s.handleRescan)
 
 	// 播放进度与收藏（仅在启用持久化时可用，否则返回 503）
@@ -104,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /stream/{id}", s.handleStream)
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)
+	mux.HandleFunc("GET /subtitles/{id}/{subID}", s.handleSubtitleTrack)
 
 	// HLS 在线转码（可选）：状态轮询、m3u8 播放列表、mpegts 分片
 	mux.HandleFunc("GET /api/v1/videos/{id}/transcode", s.handleTranscodeStatus)

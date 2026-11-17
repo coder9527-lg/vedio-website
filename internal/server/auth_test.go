@@ -27,6 +27,10 @@ func newTestServer(t *testing.T, password string) (*Server, *httptest.Server) {
 	if err != nil {
 		t.Fatalf("NewThumbnailer 失败: %v", err)
 	}
+	subs, err := media.NewSubtitleConverter(t.TempDir(), "ffmpeg")
+	if err != nil {
+		t.Fatalf("NewSubtitleConverter 失败: %v", err)
+	}
 	var authenticator *auth.Authenticator
 	if password != "" {
 		authenticator, err = auth.New(password, "test-secret", time.Hour,
@@ -35,7 +39,7 @@ func newTestServer(t *testing.T, password string) (*Server, *httptest.Server) {
 			t.Fatalf("auth.New 失败: %v", err)
 		}
 	}
-	srv, err := New(lib, thumbs, nil, nil, authenticator, false)
+	srv, err := New(lib, thumbs, nil, subs, nil, authenticator, false)
 	if err != nil {
 		t.Fatalf("New 失败: %v", err)
 	}

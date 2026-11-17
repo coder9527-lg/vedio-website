@@ -9,6 +9,7 @@
 - ⏯️ **在线播放 + 进度条拖拽**：基于 HTTP Range 的流式传输，浏览器原生播放器
 - 🖼️ **ffmpeg 缩略图**：首次访问按需抽帧并缓存，不阻塞扫描；无 ffmpeg 时自动降级占位图
 - 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖
+- 💬 **外挂字幕自动挂载**：自动发现同目录及 `subs/`/`subtitles/` 子目录中的 SRT/VTT/ASS/SSA 字幕，兼容 Jellyfin/Emby 命名（语言、SDH、强制标记），播放页一键切换/关闭；非 VTT 字幕经 ffmpeg 按需转 WebVTT 并缓存，无 ffmpeg 时 VTT 仍可直接播放
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
 - 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
@@ -24,7 +25,7 @@ vedio-website/
 ├── internal/
 │   ├── auth/              # 访问密码：HMAC 签名 Cookie、登录限流
 │   ├── config/            # 环境变量配置
-│   ├── media/             # 媒体库扫描、查询排序、ffmpeg 缩略图、HLS 按需转码
+│   ├── media/             # 媒体库扫描、查询排序、ffmpeg 缩略图、HLS 按需转码、字幕发现与转换
 │   ├── server/            # HTTP 路由、API、页面模板与静态资源（embed 内嵌）
 │   └── store/             # SQLite 持久化：播放进度、收藏（modernc 纯 Go 驱动）
 ├── docker/
@@ -93,12 +94,14 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | GET | `/watch/{id}` | 视频播放页 |
 | GET | `/api/v1/videos` | 视频列表 JSON（支持 `q` 关键字、`sort` 排序、`view=favorites/continue` 视图） |
 | GET | `/api/v1/videos/{id}` | 单个视频元信息 |
+| GET | `/api/v1/videos/{id}/subtitles` | 视频关联的外挂字幕列表（语言/格式/SDH/强制标记） |
 | POST | `/api/v1/rescan` | 重新扫描媒体目录（自动清理已删除视频的孤儿进度/收藏） |
 | GET | `/stream/{id}` | 视频流（支持 Range；加 `?download=1` 触发下载） |
 | GET | `/thumb/{id}` | 缩略图（自动生成并缓存） |
 | GET | `/api/v1/videos/{id}/transcode` | 启动/查询 HLS 转码会话状态（排队返回 429，前端轮询） |
 | GET | `/hls/{id}/index.m3u8` | HLS 播放列表（转码中实时追加，`no-store`） |
 | GET | `/hls/{id}/{seg}` | HLS mpegts 分片（文件名白名单校验，防路径穿越） |
+| GET | `/subtitles/{id}/{subID}` | 字幕轨道（统一输出 WebVTT；SRT/ASS 按需 ffmpeg 转换并缓存） |
 | GET / PUT / DELETE | `/api/v1/videos/{id}/progress` | 查询 / 上报 / 清除播放进度（需 `DB_PATH`） |
 | GET | `/api/v1/progress` | 全部播放进度（需 `DB_PATH`） |
 | GET / POST | `/api/v1/videos/{id}/favorite` | 查询收藏状态 / 收藏·取消·切换（POST 空体即 toggle，需 `DB_PATH`） |
@@ -156,7 +159,8 @@ environment:
 
 - **存储可选、默认无数据库**：视频索引保存在内存中，启动时全量扫描，运行期由 fsnotify 监听增量维护（可选定时全量兜底）；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。只有显式设置 `DB_PATH` 才启用 SQLite，用于播放进度与收藏。
 - **静态资源内嵌**：模板与 CSS 通过 `go:embed` 编译进二进制，镜像里只有一个可执行文件 + ffmpeg。
-- **浏览器兼容**：MP4/WebM 可直接播放；MKV 等容器取决于浏览器解码能力，不支持时可下载原文件或在后续版本接入服务端转码（HLS）。
+- **浏览器兼容**：MP4/WebM 可直接播放；MKV 等容器取决于浏览器解码能力，不支持时可下载原文件，或开启 `TRANSCODE_ENABLED` 使用 HLS 在线转码播放。
+- **字幕降级策略**：浏览器 `<track>` 仅原生支持 WebVTT，VTT 字幕始终直接服务；SRT/ASS/SSA 由 ffmpeg 按需转换并缓存到 `THUMB_DIR/subs/`（复用缩略图卷，无需新增挂载）。未安装 ffmpeg 时转换接口返回 `503`，VTT 字幕与视频播放不受影响。
 
 ## 路线图（Roadmap）
 
@@ -164,5 +168,6 @@ environment:
 - [x] SQLite 持久化：播放进度（自动上报 + 断点续播）、收藏、搜索/排序/视图（见 `DB_PATH`）
 - [x] 文件监听（fsnotify）自动增量扫描（含防抖、晚挂载重试、定时全量兜底）
 - [x] ffmpeg HLS 在线转码（按需转 H.264/AAC、并发排队、空闲回收，见 `TRANSCODE_*`）
-- [ ] 字幕自动挂载与多音轨支持（当前转码取第一路音视频并丢弃字幕轨）
+- [x] 外挂字幕自动挂载（SRT/VTT/ASS/SSA 发现、语言识别、ffmpeg 转 WebVTT、播放页切换）
+- [ ] 内嵌字幕/多音轨支持（当前转码取第一路音视频并丢弃字幕轨，后续随 HLS 转码一并提供）
 - [ ] 海报/元信息刮削（NFO、TMDB）
