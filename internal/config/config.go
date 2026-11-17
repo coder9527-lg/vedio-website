@@ -16,6 +16,12 @@ type Config struct {
 	WatchEnabled   bool          // 是否启用文件监听自动扫描
 	WatchDebounce  time.Duration // 文件事件防抖窗口
 	RescanInterval time.Duration // 定时全量兜底扫描间隔，0 表示关闭
+
+	// 简单访问密码认证：AuthPassword 非空即开启，留空则全站公开
+	AuthPassword     string
+	AuthSecret       string        // Cookie 签名密钥，留空时每次启动随机生成（重启后全员需重新登录）
+	AuthTTL          time.Duration // 登录态有效期
+	AuthCookieSecure bool          // Cookie 是否仅经 HTTPS 传输（反代 HTTPS 时建议开启）
 }
 
 func getenv(key, fallback string) string {
@@ -36,6 +42,17 @@ func Load() *Config {
 		WatchEnabled:   getenv("WATCH_ENABLED", "true") != "false",
 		WatchDebounce:  parseDuration("WATCH_DEBOUNCE", 2*time.Second),
 		RescanInterval: parseDuration("RESCAN_INTERVAL", 0),
+
+		AuthPassword:     os.Getenv("AUTH_PASSWORD"),
+		AuthSecret:       os.Getenv("AUTH_SECRET"),
+		AuthTTL:          parseDuration("AUTH_TTL", 30*24*time.Hour),
+		AuthCookieSecure: os.Getenv("AUTH_COOKIE_SECURE") == "true",
+	}
+
+	if cfg.AuthPassword != "" {
+		log.Printf("访问密码认证已开启，登录态有效期 %s", cfg.AuthTTL)
+	} else {
+		log.Println("未设置 AUTH_PASSWORD，站点公开访问（设置该环境变量可开启访问密码）")
 	}
 
 	if info, err := os.Stat(cfg.MediaDir); err != nil {

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}} · 我的视频库</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <h1>🔒 访问验证</h1>
+    <p class="login-sub">请输入访问密码以继续</p>
+    {{if .Error}}<p class="login-error" role="alert">{{.Error}}</p>{{end}}
+    <form method="post" action="/login" class="login-form">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <input type="password" name="password" autocomplete="current-password"
+             placeholder="访问密码" required autofocus>
+      <button type="submit">登 录</button>
+    </form>
+  </main>
+</body>
+</html>

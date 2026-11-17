@@ -12,6 +12,11 @@
     <div class="header-actions">
       <span class="count">共 {{.Count}} 个视频</span>
       <button id="rescan-btn" type="button">重新扫描</button>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
     </div>
   </header>
 
@@ -50,6 +55,7 @@
       btn.textContent = '扫描中...';
       try {
         const res = await fetch('/api/v1/rescan', { method: 'POST' });
+        if (res.status === 401) { location.href = '/login'; return; }
         const data = await res.json();
         alert('扫描完成，共索引 ' + data.indexed + ' 个视频');
         location.reload();

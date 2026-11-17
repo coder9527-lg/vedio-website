@@ -9,6 +9,11 @@
 <body class="watch-page">
   <header class="site-header">
     <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    {{if .AuthEnabled}}
+    <form method="post" action="/logout" class="inline-form">
+      <button type="submit" class="btn-secondary">退出登录</button>
+    </form>
+    {{end}}
   </header>
 
   <main class="container watch-container">

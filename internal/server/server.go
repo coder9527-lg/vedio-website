@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 
+	"github.com/coder9527-lg/vedio-website/internal/auth"
 	"github.com/coder9527-lg/vedio-website/internal/media"
 )
 
@@ -15,17 +17,62 @@ var assets embed.FS
 
 // Server 持有路由与全部依赖。
 type Server struct {
-	library *media.Library
-	thumbs  *media.Thumbnailer
-	tmpl    *template.Template
+	library       *media.Library
+	thumbs        *media.Thumbnailer
+	tmpl          *template.Template
+	authenticator *auth.Authenticator // nil 表示未开启访问密码
+	cookieSecure  bool
 }
 
-func New(library *media.Library, thumbs *media.Thumbnailer) (*Server, error) {
+func New(library *media.Library, thumbs *media.Thumbnailer, authenticator *auth.Authenticator, cookieSecure bool) (*Server, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
-	return &Server{library: library, thumbs: thumbs, tmpl: tmpl}, nil
+	return &Server{
+		library:       library,
+		thumbs:        thumbs,
+		tmpl:          tmpl,
+		authenticator: authenticator,
+		cookieSecure:  cookieSecure,
+	}, nil
+}
+
+// authEnabled 供模板与处理器判断是否展示登录相关元素。
+func (s *Server) authEnabled() bool { return s.authenticator != nil }
+
+// isPublicPath 开启认证后仍允许匿名访问的路径前缀/精确路径。
+func isPublicPath(path string) bool {
+	if path == "/login" {
+		return true
+	}
+	return strings.HasPrefix(path, "/static/") ||
+		path == "/thumb-placeholder.svg" ||
+		path == "/favicon.ico"
+}
+
+// requireAuth 在开启访问密码时拦截未登录请求：
+// API 返回 401 JSON，页面请求 302 跳转到登录页并携带回跳地址。
+func (s *Server) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.authEnabled() || isPublicPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if err := s.authenticator.CheckRequest(r); err == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		loc := "/login"
+		if r.URL.Path != "/" && r.URL.Path != "" {
+			loc = "/login?next=" + urlEncode(r.URL.RequestURI())
+		}
+		http.Redirect(w, r, loc, http.StatusSeeOther)
+	})
 }
 
 // Handler 构建路由。要求 Go 1.22+ 的增强 ServeMux（方法与路径变量）。
@@ -41,11 +88,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)
 
+	// 认证相关路由（未开启密码时 /login 直接回首页）
+	mux.HandleFunc("GET /login", s.handleLoginPage)
+	mux.HandleFunc("POST /login", s.handleLogin)
+	mux.HandleFunc("POST /logout", s.handleLogout)
+
 	staticFS, err := fs.Sub(assets, "static")
 	if err != nil {
 		log.Fatalf("加载静态资源失败: %v", err)
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
-	return s.recoverPanic(s.logRequest(mux))
+	return s.recoverPanic(s.logRequest(s.requireAuth(mux)))
 }

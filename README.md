@@ -10,6 +10,7 @@
 - 🖼️ **ffmpeg 缩略图**：首次访问按需抽帧并缓存，不阻塞扫描；无 ffmpeg 时自动降级占位图
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
+- 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
 - 🐳 **Docker 一键部署**：多阶段构建，小镜像；支持 `PUID/PGID` 适配 NAS 挂载卷权限
 - 🛡️ 优雅关闭、请求日志、panic 恢复
 
@@ -19,6 +20,7 @@
 vedio-website/
 ├── cmd/server/            # 程序入口
 ├── internal/
+│   ├── auth/              # 访问密码：HMAC 签名 Cookie、登录限流
 │   ├── config/            # 环境变量配置
 │   ├── media/             # 媒体库扫描、ffmpeg 缩略图
 │   └── server/            # HTTP 路由、API、页面模板与静态资源（embed 内嵌）
@@ -70,6 +72,10 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `WATCH_ENABLED` | `true` | 是否启用 fsnotify 文件监听自动增量扫描，设为 `false` 关闭 |
 | `WATCH_DEBOUNCE` | `2s` | 文件事件防抖窗口；静默超过该时长才入库，防止拷入未完成的文件 |
 | `RESCAN_INTERVAL` | 空（关闭） | 定时全量兜底扫描间隔（如 `10m`、`1h`），NFS/SMB 等网络盘 inotify 事件可能丢失时建议开启；留空或 `0` 关闭 |
+| `AUTH_PASSWORD` | 空（公开） | 访问密码；非空即开启登录认证，留空则全站公开 |
+| `AUTH_SECRET` | 空（随机） | 登录 Cookie 的 HMAC 签名密钥；设置固定值可避免容器重启后全员重新登录 |
+| `AUTH_TTL` | `720h`（30 天） | 登录态有效期，如 `24h`、`7d` |
+| `AUTH_COOKIE_SECURE` | `false` | 反代启用 HTTPS 时设为 `true`，Cookie 仅经 HTTPS 传输 |
 
 ## HTTP API
 
@@ -82,6 +88,27 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | POST | `/api/v1/rescan` | 重新扫描媒体目录 |
 | GET | `/stream/{id}` | 视频流（支持 Range；加 `?download=1` 触发下载） |
 | GET | `/thumb/{id}` | 缩略图（自动生成并缓存） |
+| GET / POST | `/login` | 登录页 / 提交密码（开启认证后） |
+| POST | `/logout` | 退出登录并清除会话 |
+
+> 开启 `AUTH_PASSWORD` 后，除 `/login`、`/static/*`、占位图外的接口均需登录：页面请求 302 跳转登录页，`/api/*` 返回 `401`。
+
+## 访问密码（可选）
+
+默认不设密码、全站公开。给容器加一个环境变量即可开启：
+
+```yaml
+environment:
+  AUTH_PASSWORD: "你的密码"
+  # AUTH_SECRET: "一段随机长字符串"   # 建议设置，固定签名密钥，重启不掉登录
+  # AUTH_TTL: "7d"                    # 登录有效期
+  # AUTH_COOKIE_SECURE: "true"        # 经 HTTPS 反代访问时开启
+```
+
+- 认证基于 HMAC-SHA256 签名的无状态 Cookie，服务端不存储会话，仍保持零数据库依赖；
+- 静态资源与登录页放行，其余页面未登录跳转登录页，API 返回 `401 JSON`；
+- 同一 IP 连续登录失败 10 次后锁定 10 分钟；回跳地址仅允许站内路径，防止开放重定向；
+- 未设置 `AUTH_SECRET` 时每次启动随机生成密钥，重启后所有登录态失效。
 
 ## 设计说明
 
@@ -91,7 +118,7 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 
 ## 路线图（Roadmap）
 
-- [ ] 登录认证 / 简单访问密码
+- [x] 登录认证 / 简单访问密码（HMAC Cookie、失败限流，见 `AUTH_PASSWORD`）
 - [ ] SQLite 持久化：播放记录、收藏、搜索
 - [x] 文件监听（fsnotify）自动增量扫描（含防抖、晚挂载重试、定时全量兜底）
 - [ ] ffmpeg HLS 在线转码，解决 MKV/小众编码播放问题

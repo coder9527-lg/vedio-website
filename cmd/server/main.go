@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coder9527-lg/vedio-website/internal/auth"
 	"github.com/coder9527-lg/vedio-website/internal/config"
 	"github.com/coder9527-lg/vedio-website/internal/media"
 	"github.com/coder9527-lg/vedio-website/internal/server"
@@ -67,7 +68,15 @@ func main() {
 		log.Printf("定时全量兜底扫描已开启，间隔 %s", cfg.RescanInterval)
 	}
 
-	srv, err := server.New(library, thumbs)
+	var authenticator *auth.Authenticator
+	if cfg.AuthPassword != "" {
+		authenticator, err = auth.New(cfg.AuthPassword, cfg.AuthSecret, cfg.AuthTTL)
+		if err != nil {
+			log.Fatalf("初始化认证失败: %v", err)
+		}
+	}
+
+	srv, err := server.New(library, thumbs, authenticator, cfg.AuthCookieSecure)
 	if err != nil {
 		log.Fatalf("初始化服务失败: %v", err)
 	}

@@ -14,8 +14,14 @@ import (
 
 // ---------- 页面 ----------
 
+// basePage 存放所有页面共用的模板字段。
+type basePage struct {
+	Title       string
+	AuthEnabled bool
+}
+
 type indexData struct {
-	Title  string
+	basePage
 	Videos []*media.Video
 	Count  int
 }
@@ -26,7 +32,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	videos := s.library.List()
-	s.render(w, "index.html", indexData{Title: "我的视频库", Videos: videos, Count: len(videos)})
+	s.render(w, "index.html", indexData{
+		basePage: basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
+		Videos:   videos,
+		Count:    len(videos),
+	})
 }
 
 func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
@@ -36,9 +46,12 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "watch.html", struct {
-		Title string
+		basePage
 		Video *media.Video
-	}{Title: v.Name, Video: v})
+	}{
+		basePage: basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
+		Video:    v,
+	})
 }
 
 // ---------- JSON API ----------

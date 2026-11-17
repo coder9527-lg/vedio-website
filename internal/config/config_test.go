@@ -58,3 +58,40 @@ func TestParseDurationInvalidFallsBack(t *testing.T) {
 		t.Errorf("合法时长解析错误，实际 %s", got)
 	}
 }
+
+func TestLoadAuthConfig(t *testing.T) {
+	t.Setenv("MEDIA_DIR", t.TempDir())
+	t.Setenv("AUTH_PASSWORD", "mypass")
+	t.Setenv("AUTH_SECRET", "stable-secret")
+	t.Setenv("AUTH_TTL", "12h")
+	t.Setenv("AUTH_COOKIE_SECURE", "true")
+
+	cfg := Load()
+	if cfg.AuthPassword != "mypass" || cfg.AuthSecret != "stable-secret" {
+		t.Errorf("认证配置读取错误: %+v", cfg)
+	}
+	if cfg.AuthTTL != 12*time.Hour {
+		t.Errorf("AUTH_TTL 期望 12h，实际 %s", cfg.AuthTTL)
+	}
+	if !cfg.AuthCookieSecure {
+		t.Error("AUTH_COOKIE_SECURE=true 时应为 true")
+	}
+}
+
+func TestLoadAuthDefaults(t *testing.T) {
+	t.Setenv("MEDIA_DIR", t.TempDir())
+	t.Setenv("AUTH_PASSWORD", "")
+	t.Setenv("AUTH_TTL", "")
+	t.Setenv("AUTH_COOKIE_SECURE", "")
+
+	cfg := Load()
+	if cfg.AuthPassword != "" {
+		t.Error("未设置 AUTH_PASSWORD 时应为空（公开访问）")
+	}
+	if cfg.AuthTTL != 30*24*time.Hour {
+		t.Errorf("登录态默认有效期应为 720h，实际 %s", cfg.AuthTTL)
+	}
+	if cfg.AuthCookieSecure {
+		t.Error("默认不应开启 Secure Cookie")
+	}
+}

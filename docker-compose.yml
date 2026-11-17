@@ -12,6 +12,12 @@ services:
       PGID: "1000"
       TZ: Asia/Shanghai
       PORT: "8080"
+      # 访问密码：取消注释并设置即开启登录认证
+      # AUTH_PASSWORD: "change-me"
+      # AUTH_SECRET: "please-change-to-a-long-random-string"
+      # AUTH_TTL: "7d"
+      # 经 HTTPS 反向代理访问时建议开启
+      # AUTH_COOKIE_SECURE: "true"
     volumes:
       # 视频媒体目录（NAS 共享/挂载点），映射到容器内 /media
       - /volume1/videos:/media:ro
