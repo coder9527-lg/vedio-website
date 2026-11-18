@@ -13,6 +13,7 @@
 - 💬 **外挂字幕自动挂载**：同目录或 `subs/`/`subtitles/`/`字幕/` 子目录中同名（可带语言/SDH/强制后缀，如 `Movie.zh-CN.srt`、`Movie.en.forced.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端纯 Go 统一转 WebVTT（无需额外进程/磁盘缓存），通过 `<track>` 在原画与转码两种模式下均可切换
 - 📝 **内嵌字幕提取**：转码时自动把视频内封装的文本字幕（SRT/ASS/WebVTT/MOV_TEXT）提取为 WebVTT 并挂进同一个字幕菜单（标注「[内嵌]」）；位图字幕（PGS/DVD 等）仅识别不提取
 - 🎞️ **NFO 元信息与本地海报**：自动识别 Kodi/Jellyfin 风格的 `movie.nfo` / 同名 `.nfo`（片名、年份、片长、评分、类型、导演、主演、剧情简介等），以及同目录命名约定的海报/背景图（`*-poster.jpg`、`folder.jpg`、`*.fanart.jpg` 等）；首页卡片优先展示海报与正式片名，播放页呈现完整影片资料，NFO/图片增删由文件监听自动刷新，无需重扫
+- 🌐 **TMDB 在线刮削**（可选）：配置 `TMDB_API_KEY` 后在播放页一键搜索 TMDB 候选、人工确认后自动下载海报/背景图并补齐缺失元信息；本地 NFO 优先，结果持久化到缓存目录、重启自动恢复；未配置时功能静默关闭
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
 - 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
@@ -89,6 +90,11 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `AUTH_SECRET` | 空（随机） | 登录 Cookie 的 HMAC 签名密钥；设置固定值可避免容器重启后全员重新登录 |
 | `AUTH_TTL` | `720h`（30 天） | 登录态有效期，如 `24h`、`7d` |
 | `AUTH_COOKIE_SECURE` | `false` | 反代启用 HTTPS 时设为 `true`，Cookie 仅经 HTTPS 传输 |
+| `TMDB_API_KEY` | 空（关闭） | TMDB v3 API Key；留空则在线刮削整体关闭（接口 503、页面隐藏入口），本地 NFO/海报不受影响 |
+| `TMDB_LANG` | `zh-CN` | TMDB 元信息语言，如 `zh-CN`、`en-US` |
+| `TMDB_BASE_URL` | 官方 API | API 接入点覆写，供内网代理/测试使用（默认 `https://api.themoviedb.org/3`） |
+| `TMDB_IMAGE_BASE_URL` | 官方图床 | 图片源前缀覆写（默认 `https://image.tmdb.org/t/p`），国内可用镜像加速 |
+| `TMDB_IMAGE_DIR` | `/data/tmdb` | 在线刮削下载的海报/背景图与 `metadata.json` 缓存目录，位于持久化卷内 |
 
 ## HTTP API
 
@@ -101,7 +107,9 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | POST | `/api/v1/rescan` | 重新扫描媒体目录（自动清理已删除视频的孤儿进度/收藏） |
 | GET | `/stream/{id}` | 视频流（支持 Range；加 `?download=1` 触发下载） |
 | GET | `/thumb/{id}` | 缩略图（自动生成并缓存） |
-| GET | `/api/v1/videos/{id}/metadata` | 刮削元信息（NFO 解析结果 + 本地海报路径，无元信息时 404） |
+| GET | `/api/v1/videos/{id}/metadata` | 刮削元信息（NFO/TMDB 合并结果 + 海报路径，无元信息时 404） |
+| GET | `/api/v1/videos/{id}/scrape` | 用清洗后的文件名搜索 TMDB 候选影片（未配置 Key 时 503） |
+| POST | `/api/v1/videos/{id}/scrape` | 请求体 `{"tmdbId": 555}`，拉取详情、下载图片并与本地 NFO 合并 |
 | GET | `/artwork/{id}/poster` · `/artwork/{id}/backdrop` | 本地海报 / 背景图（仅限媒体根目录内的图片，白名单扩展名） |
 | GET | `/api/v1/videos/{id}/transcode` | 启动/查询 HLS 转码会话状态（排队返回 429，前端轮询） |
 | GET | `/hls/{id}/index.m3u8` | HLS 入口播放列表（单音轨返回 index，多音轨返回 master 内容，`no-store`） |
@@ -197,7 +205,17 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - **展示规则**：有海报时首页卡片与播放页封面使用海报，否则回退 ffmpeg 缩略图；片名、年份、评分、片长、类型展示在卡片上，播放页另有剧情简介、导演、主演、出品方与背景图横幅
 - **自动刷新**：NFO/图片的新增、替换、删除由 fsnotify 防抖后增量生效，不需要手动重新扫描；`/artwork/*` 只提供媒体根目录内、扩展名白名单内的登记图片，带路径穿越防护
 
-> TMDB 等在线刮削尚未接入，目前只读取本地 NFO 与图片；路线图中的在线刮削会复用同一套 `Metadata` 结构与展示链路。
+## 在线刮削（TMDB）
+
+配置 `TMDB_API_KEY` 后开启，无需任何外部 SDK 或 CGO（纯标准库 `net/http`）：
+
+- **触发方式**：播放页点击「🔍 在线刮削」，后端先把文件名清洗为片名（自动剥离 `1080p`、`BluRay`、`x264`、发布组、方括号注释等噪声，保留年份），再搜索 TMDB 并弹出候选列表（含海报、年份、评分、简介）供人工确认，避免自动匹配错误
+- **合并策略**：以本地 NFO 为权威基底，TMDB 只填充空缺字段；来源分别标记为 `nfo`、`tmdb`、`nfo+tmdb`，页面展示对应中文文案
+- **图片下载**：海报（w500）与背景图（w1280）原子写入 `TMDB_IMAGE_DIR/<视频ID>/`，经 `/artwork/*` 提供（与 NFO 海报同一套扩展名白名单与路径穿越防护，允许根目录为媒体根目录 + 刮削缓存目录）；图片下载失败不阻断文字元信息
+- **持久化**：刮削结果写入缓存目录的 `metadata.json`，重新扫描或进程重启后自动恢复，并与当前 NFO 重新合并；同一视频的刮削请求串行化，避免并发竞态
+- **优雅降级**：未配置 Key、TMDB 不可达、返回错误码时接口分别返回 503/502，页面给出提示，不影响播放与本地刮削；`TMDB_BASE_URL`、`TMDB_IMAGE_BASE_URL` 可指向内网代理或图床镜像
+
+> 本地 NFO 与在线 TMDB 复用同一套 `Metadata` 结构、API 与页面展示链路，二者可独立或组合使用。
 
 ## 设计说明
 
@@ -215,4 +233,4 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - [x] 多音轨支持（ffprobe 探测 + HLS 音频分组，播放页切换）
 - [x] 内嵌文本字幕提取为 WebVTT（转码启动时 ffmpeg 导出 `sub-N.vtt` 并复用字幕菜单；位图字幕 PGS/DVD 等暂不支持）
 - [x] 海报/元信息刮削：本地 NFO（Kodi/Jellyfin 兼容）+ 海报/背景图命名约定，文件监听自动刷新（见「海报与元信息（NFO）」）
-- [ ] 在线刮削（TMDB API，补全缺失的 NFO/海报）
+- [x] 在线刮削（TMDB v3，纯标准库实现，候选人工确认，与 NFO 合并并持久化，见「在线刮削（TMDB）」）

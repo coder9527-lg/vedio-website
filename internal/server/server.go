@@ -22,12 +22,13 @@ type Server struct {
 	thumbs        *media.Thumbnailer
 	transcoder    *media.Transcoder // nil 表示未启用 HLS 在线转码
 	store         *store.Store      // nil 表示未启用持久化（播放进度/收藏不可用）
+	scraper       *media.Scraper    // nil 表示未启用 TMDB 在线刮削
 	tmpl          *template.Template
 	authenticator *auth.Authenticator // nil 表示未开启访问密码
 	cookieSecure  bool
 }
 
-func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Transcoder, st *store.Store, authenticator *auth.Authenticator, cookieSecure bool) (*Server, error) {
+func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Transcoder, st *store.Store, authenticator *auth.Authenticator, scraper *media.Scraper, cookieSecure bool) (*Server, error) {
 	tmpl, err := template.New("").Funcs(tmplFuncs).ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, err
@@ -37,6 +38,7 @@ func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Tr
 		thumbs:        thumbs,
 		transcoder:    transcoder,
 		store:         st,
+		scraper:       scraper,
 		tmpl:          tmpl,
 		authenticator: authenticator,
 		cookieSecure:  cookieSecure,
@@ -94,9 +96,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/videos/{id}/metadata", s.handleAPIMetadata)
 	mux.HandleFunc("POST /api/v1/rescan", s.handleRescan)
 
-	// 本地海报/背景图（NFO 或命名约定发现，仅提供媒体根目录内的图片）
+	// 本地海报/背景图（NFO/命名约定/TMDB 缓存发现，仅提供已登记的图片）
 	mux.HandleFunc("GET /artwork/{id}/poster", s.handleArtwork("poster"))
 	mux.HandleFunc("GET /artwork/{id}/backdrop", s.handleArtwork("backdrop"))
+
+	// TMDB 在线刮削（未配置 TMDB_API_KEY 时返回 503）
+	mux.HandleFunc("GET /api/v1/videos/{id}/scrape", s.handleScrapeSearch)
+	mux.HandleFunc("POST /api/v1/videos/{id}/scrape", s.handleScrapeApply)
 
 	// 播放进度与收藏（仅在启用持久化时可用，否则返回 503）
 	mux.HandleFunc("GET /api/v1/progress", s.handleProgressList)

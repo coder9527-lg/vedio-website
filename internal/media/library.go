@@ -3,6 +3,7 @@ package media
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -42,6 +43,9 @@ type Library struct {
 	videos   map[string]*Video
 	subs     map[string][]*Subtitle // 视频 ID → 外挂字幕列表
 	metadata map[string]*Metadata   // 视频 ID → 刮削元信息（NFO/本地海报，可能为 nil）
+
+	// scraperImageDir 是在线刮削图片与 metadata.json 的缓存目录，非空时扫描会恢复历史刮削结果
+	scraperImageDir string
 }
 
 func NewLibrary(root string, exts map[string]bool) *Library {
@@ -98,8 +102,17 @@ func (l *Library) Scan() (int, error) {
 		if s := findSubtitles(l.root, v); len(s) > 0 {
 			subs[id] = s
 		}
-		if md := loadMetadata(l.root, v); md != nil {
-			meta[id] = md
+		local := loadMetadata(l.root, v)
+		// 在线刮削历史结果从缓存目录恢复，并与本地 NFO 重新合并（NFO 优先）
+		if saved := l.loadPersistedMetadata(id); saved != nil {
+			merged := mergeMetadata(local, saved)
+			if local != nil {
+				// 本地新增了 NFO：来源升级为混合；否则保留持久化时的来源标记
+				merged.Source = mergedSource(local)
+			}
+			meta[id] = merged
+		} else if local != nil {
+			meta[id] = local
 		}
 	}
 
@@ -179,6 +192,38 @@ func (l *Library) Metadata(id string) *Metadata {
 	return l.metadata[id]
 }
 
+// loadPersistedMetadata 从刮削缓存目录读取历史在线刮削结果；
+// 未配置缓存目录、文件缺失或解析失败时返回 nil（静默降级，不影响扫描）。
+func (l *Library) loadPersistedMetadata(videoID string) *Metadata {
+	if l.scraperImageDir == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(l.scraperImageDir, videoID, "metadata.json"))
+	if err != nil {
+		return nil
+	}
+	var md Metadata
+	if err := json.Unmarshal(raw, &md); err != nil {
+		return nil
+	}
+	if md.empty() {
+		return nil
+	}
+	return &md
+}
+
+// SetMetadata 直接写入视频的刮削元信息（在线刮削合并后回写）；
+// md 为 nil 或全空时删除该视频的元信息记录。
+func (l *Library) SetMetadata(videoID string, md *Metadata) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if md == nil || md.empty() {
+		delete(l.metadata, videoID)
+		return
+	}
+	l.metadata[videoID] = md
+}
+
 // RefreshMetadata 重新为单个视频加载 NFO 与本地海报/背景图
 // （NFO 或图片独立增删时由 Watcher 调用）。
 func (l *Library) RefreshMetadata(videoID string) {
@@ -208,6 +253,9 @@ func (l *Library) Get(id string) (*Video, bool) {
 
 // Root 返回媒体库根目录的绝对路径。
 func (l *Library) Root() string { return l.root }
+
+// SetScraperImageDir 登记在线刮削缓存目录，使重新扫描时能恢复历史刮削结果。
+func (l *Library) SetScraperImageDir(dir string) { l.scraperImageDir = dir }
 
 // IsVideoExt 判断扩展名是否为受支持的视频。
 func (l *Library) IsVideoExt(name string) bool {

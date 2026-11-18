@@ -35,7 +35,7 @@ func newTestServer(t *testing.T, password string) (*Server, *httptest.Server) {
 			t.Fatalf("auth.New 失败: %v", err)
 		}
 	}
-	srv, err := New(lib, thumbs, nil, nil, authenticator, false)
+	srv, err := New(lib, thumbs, nil, nil, authenticator, nil, false)
 	if err != nil {
 		t.Fatalf("New 失败: %v", err)
 	}

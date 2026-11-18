@@ -51,7 +51,7 @@ func newPersistTestServer(t *testing.T) (*Server, *httptest.Server, string) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	srv, err := New(lib, thumbs, nil, st, nil, false)
+	srv, err := New(lib, thumbs, nil, st, nil, nil, false)
 	if err != nil {
 		t.Fatalf("New 失败: %v", err)
 	}

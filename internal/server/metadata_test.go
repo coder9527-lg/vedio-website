@@ -41,7 +41,7 @@ func newMetadataTestServer(t *testing.T) (srv *Server, videoID, root string) {
 	if err != nil {
 		t.Fatalf("NewThumbnailer 失败: %v", err)
 	}
-	srv, err = New(lib, thumbs, nil, nil, nil, false)
+	srv, err = New(lib, thumbs, nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("New 失败: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestMetadataAPINotFoundWithoutNFO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := New(lib, thumbs, nil, nil, nil, false)
+	srv, err := New(lib, thumbs, nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

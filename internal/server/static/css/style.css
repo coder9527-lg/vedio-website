@@ -456,3 +456,58 @@ button:disabled { opacity: .6; cursor: wait; }
   .movie-meta { flex-direction: column; }
   .movie-poster { width: 110px; }
 }
+
+/* 在线刮削（TMDB） */
+.watch-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.watch-title-row .watch-title { margin-bottom: 0; }
+.scrape-btn { white-space: nowrap; padding: 6px 14px; font-size: 13px; }
+.scrape-modal {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0, 0, 0, .6);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.scrape-modal[hidden] { display: none; }
+.scrape-dialog {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: min(680px, 100%);
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.scrape-dialog-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.scrape-dialog-head h3 { margin: 0; font-size: 16px; }
+.scrape-close {
+  background: none; border: none; color: var(--muted);
+  font-size: 18px; cursor: pointer; padding: 4px 8px;
+}
+.scrape-close:hover { color: var(--text); }
+.scrape-body { overflow-y: auto; padding: 12px 18px 18px; display: grid; gap: 10px; }
+.scrape-hint { color: var(--muted); text-align: center; padding: 24px 0; margin: 0; }
+.scrape-hit {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+.scrape-hit:hover { border-color: var(--accent); transform: translateY(-1px); }
+.scrape-hit-poster { width: 60px; min-width: 60px; height: 90px; object-fit: cover; border-radius: 6px; background: #111827; }
+.scrape-hit-empty {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--muted);
+}
+.scrape-hit-info { display: grid; gap: 3px; min-width: 0; }
+.scrape-hit-title { font-size: 15px; font-weight: 600; }
+.scrape-hit-orig { font-size: 12px; color: var(--muted); }
+.scrape-hit-overview { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.scrape-hit-rating { font-size: 12px; color: #d97706; }

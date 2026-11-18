@@ -36,6 +36,19 @@ var tmplFuncs = template.FuncMap{
 	"joinStrings": func(items []string, sep string) string {
 		return strings.Join(items, sep)
 	},
+	// scrapeSource 把元信息来源标记转为中文展示文案。
+	"scrapeSource": func(source string) string {
+		switch source {
+		case "nfo":
+			return "NFO 刮削"
+		case "tmdb":
+			return "TMDB 在线刮削"
+		case "nfo+tmdb":
+			return "NFO + TMDB"
+		default:
+			return "本地文件"
+		}
+	},
 	// hasProgress 判断进度记录是否有效（位置大于 5 秒，避免片头抖动）。
 	"hasProgress": func(position, duration float64) bool {
 		if position < 5 {

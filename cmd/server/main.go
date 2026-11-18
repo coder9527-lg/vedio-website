@@ -24,6 +24,22 @@ func main() {
 	cfg := config.Load()
 
 	library := media.NewLibrary(cfg.MediaDir, media.DefaultExts)
+
+	// TMDB 在线刮削（可选）：必须在初始扫描前创建，扫描时才能从缓存目录恢复历史刮削结果。
+	// 未配置 API Key 时整个功能关闭，不影响本地 NFO/海报。
+	var scraper *media.Scraper
+	if tmdbClient := media.NewTMDBClient(cfg.TMDBAPIKey, cfg.TMDBLang, cfg.TMDBBaseURL, cfg.TMDBImageURL); tmdbClient != nil {
+		sc, err := media.NewScraper(tmdbClient, library, cfg.TMDBImageDir)
+		if err != nil {
+			log.Printf("警告: 初始化 TMDB 刮削器失败: %v，在线刮削不可用", err)
+		} else {
+			scraper = sc
+			log.Printf("TMDB 在线刮削已开启（语言 %s，图片缓存 %s）", cfg.TMDBLang, cfg.TMDBImageDir)
+		}
+	} else {
+		log.Println("未设置 TMDB_API_KEY，在线刮削关闭（本地 NFO/海报不受影响）")
+	}
+
 	if n, err := library.Scan(); err != nil {
 		log.Printf("初始扫描媒体目录失败: %v", err)
 	} else {
@@ -114,7 +130,7 @@ func main() {
 		}
 	}
 
-	srv, err := server.New(library, thumbs, transcoder, db, authenticator, cfg.AuthCookieSecure)
+	srv, err := server.New(library, thumbs, transcoder, db, authenticator, scraper, cfg.AuthCookieSecure)
 	if err != nil {
 		log.Fatalf("初始化服务失败: %v", err)
 	}

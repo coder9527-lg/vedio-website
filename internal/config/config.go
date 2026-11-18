@@ -26,6 +26,13 @@ type Config struct {
 	WatchDebounce  time.Duration // 文件事件防抖窗口
 	RescanInterval time.Duration // 定时全量兜底扫描间隔，0 表示关闭
 
+	// TMDB 在线刮削：APIKey 留空则禁用，仅保留本地 NFO/海报
+	TMDBAPIKey   string // v3 API Key（Bearer token 不支持，只用 api_key 方式）
+	TMDBLang     string // 元信息语言，如 zh-CN / en-US
+	TMDBBaseURL  string // API 接入点，留空用官方地址（测试/内网代理可覆写）
+	TMDBImageURL string // 图片源前缀，留空用官方 image.tmdb.org
+	TMDBImageDir string // 刮削下载的海报/背景图缓存目录
+
 	// 简单访问密码认证：AuthPassword 非空即开启，留空则全站公开
 	AuthPassword     string
 	AuthSecret       string        // Cookie 签名密钥，留空时每次启动随机生成（重启后全员需重新登录）
@@ -58,6 +65,12 @@ func Load() *Config {
 		WatchEnabled:   getenv("WATCH_ENABLED", "true") != "false",
 		WatchDebounce:  parseDuration("WATCH_DEBOUNCE", 2*time.Second),
 		RescanInterval: parseDuration("RESCAN_INTERVAL", 0),
+
+		TMDBAPIKey:   os.Getenv("TMDB_API_KEY"),
+		TMDBLang:     getenv("TMDB_LANG", "zh-CN"),
+		TMDBBaseURL:  os.Getenv("TMDB_BASE_URL"),
+		TMDBImageURL: os.Getenv("TMDB_IMAGE_BASE_URL"),
+		TMDBImageDir: getenv("TMDB_IMAGE_DIR", "/data/tmdb"),
 
 		AuthPassword:     os.Getenv("AUTH_PASSWORD"),
 		AuthSecret:       os.Getenv("AUTH_SECRET"),

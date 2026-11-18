@@ -94,7 +94,7 @@ func TestSubtitleHTTPEndpoints(t *testing.T) {
 	}
 
 	thumbs, _ := media.NewThumbnailer(t.TempDir(), "ffmpeg")
-	srv, err := New(lib, thumbs, nil, nil, nil, false)
+	srv, err := New(lib, thumbs, nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

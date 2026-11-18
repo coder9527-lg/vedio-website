@@ -114,6 +114,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		State          videoState
 		StoreOn        bool
 		TranscodeOn    bool
+		ScrapeOn       bool
 		NativePlayable bool
 		Subtitles      []*media.Subtitle
 	}{
@@ -123,6 +124,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		State:          state,
 		StoreOn:        s.storeEnabled(),
 		TranscodeOn:    s.transcodeEnabled(),
+		ScrapeOn:       s.scraperEnabled(),
 		NativePlayable: isNativePlayable(v.Ext),
 		Subtitles:      subtitles,
 	})

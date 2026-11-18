@@ -54,18 +54,40 @@ func (s *Server) handleArtwork(kind string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		// 纵深防御：确认图片位于媒体根目录内，杜绝任何路径穿越可能
-		root, err := filepath.Abs(s.library.Root())
-		if err != nil {
-			http.Error(w, "服务器内部错误", http.StatusInternalServerError)
-			return
-		}
+		// 纵深防御：图片必须位于媒体根目录或 TMDB 缓存目录内，杜绝任何路径穿越可能
 		abs, err := filepath.Abs(target)
-		if err != nil || abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
+		if err != nil || !s.allowedArtworkRoot(abs) {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		http.ServeFile(w, r, abs)
 	}
+}
+
+// allowedArtworkRoot 判断绝对路径是否落在媒体根目录或刮削图片缓存目录之内。
+func (s *Server) allowedArtworkRoot(abs string) bool {
+	for _, root := range s.artworkRoots() {
+		if abs == root || strings.HasPrefix(abs, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// artworkRoots 返回允许提供图片的根目录（均已转为绝对路径，跳过不可解析项）。
+func (s *Server) artworkRoots() []string {
+	candidates := []string{s.library.Root()}
+	if s.scraper != nil {
+		if dir := s.scraper.ImageDir(); dir != "" {
+			candidates = append(candidates, dir)
+		}
+	}
+	roots := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if abs, err := filepath.Abs(c); err == nil {
+			roots = append(roots, abs)
+		}
+	}
+	return roots
 }
