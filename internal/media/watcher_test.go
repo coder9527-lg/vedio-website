@@ -154,7 +154,7 @@ func TestWatcherSubtitleSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 2*time.Second, func() bool { return len(lib.Subtitles(vid.ID)) == 1 })
-	if got := lib.Subtitles(vid.ID); got[0].Lang != "zh" || !got[0].Default {
+	if got := lib.Subtitles(vid.ID); got[0].Lang != "zh-Hans" || !got[0].Default {
 		t.Fatalf("字幕语言/默认标记异常: %+v", got)
 	}
 
@@ -163,6 +163,36 @@ func TestWatcherSubtitleSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 2*time.Second, func() bool { return len(lib.Subtitles(vid.ID)) == 0 })
+}
+
+func TestWatcherSubtitleInSubdirectory(t *testing.T) {
+	lib, _, root := newTestWatcher(t, 30*time.Millisecond)
+
+	video := filepath.Join(root, "show.mkv")
+	if err := os.WriteFile(video, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return lib.Len() == 1 })
+	vid, _ := lib.Get(makeID("show.mkv"))
+
+	// 字幕放在运行中新建的 subs 子目录（Jellyfin 风格）
+	subDir := filepath.Join(root, "subs")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(subDir, "show.zh.srt")
+	if err := os.WriteFile(sub, []byte("1\n00:00:01,000 --> 00:00:02,000\nhi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return len(lib.Subtitles(vid.ID)) == 1 })
+	if got := lib.Subtitles(vid.ID)[0]; got.Lang != "zh-Hans" || filepath.Dir(got.RelPath) != "subs" {
+		t.Fatalf("子目录字幕关联异常: %+v", got)
+	}
+
+	if err := os.Remove(sub); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return len(lib.Subtitles(vid.ID)) == 0 })
 }
 
 func TestWatcherLateMountedRoot(t *testing.T) {

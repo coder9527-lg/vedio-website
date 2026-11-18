@@ -235,14 +235,21 @@ func (w *Watcher) flush() {
 	}
 }
 
-// refreshSiblingSubtitles 在字幕文件变更后，刷新同目录下同名视频的字幕列表。
-// 视频名可能含点号（Show.2024.mkv），因此不靠截断文件名，而是遍历库中同目录视频，
-// 复用与扫描一致的 subtitleStemMatch 规则匹配。
+// refreshSiblingSubtitles 在字幕文件变更后，刷新关联视频的字幕列表。
+// 视频名可能含点号（Show.2024.mkv），因此不靠截断文件名，而是遍历库中视频，
+// 复用与扫描一致的 subtitleStemMatch 规则匹配；字幕可能位于视频同目录或其
+// subs/subtitles/字幕 子目录，两种位置都要覆盖。
 func (w *Watcher) refreshSiblingSubtitles(subPath string) {
 	dir := filepath.Dir(subPath)
 	stem := strings.TrimSuffix(filepath.Base(subPath), filepath.Ext(subPath))
 	for _, v := range w.library.List() {
-		if filepath.Dir(v.AbsPath()) != dir || !subtitleStemMatch(stem, v.Name) {
+		videoDir := filepath.Dir(v.AbsPath())
+		inVideoDir := dir == videoDir
+		inSubDir := false
+		if !inVideoDir && filepath.Dir(dir) == videoDir {
+			inSubDir = subtitleDirs[strings.ToLower(filepath.Base(dir))]
+		}
+		if !(inVideoDir || inSubDir) || !subtitleStemMatch(stem, v.Name) {
 			continue
 		}
 		w.library.RefreshSubtitles(v.ID)

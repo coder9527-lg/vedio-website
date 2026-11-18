@@ -10,7 +10,7 @@
 - 🖼️ **ffmpeg 缩略图**：首次访问按需抽帧并缓存，不阻塞扫描；无 ffmpeg 时自动降级占位图
 - 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖
 - 🔊 **多音轨支持**：ffprobe 自动探测视频中的多路音轨（语言/标题），转码时产出带 `EXT-X-MEDIA` 音频分组的 master 播放列表，播放页可在音轨菜单中切换；单音轨视频保持简单布局不变
-- 💬 **外挂字幕自动挂载**：同目录同名（可带语言后缀，如 `Movie.zh-CN.srt`、`Movie.en.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端统一转 WebVTT，通过 `<track>` 在原画与转码两种模式下均可切换
+- 💬 **外挂字幕自动挂载**：同目录或 `subs/`/`subtitles/`/`字幕/` 子目录中同名（可带语言/SDH/强制后缀，如 `Movie.zh-CN.srt`、`Movie.en.forced.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端纯 Go 统一转 WebVTT（无需额外进程/磁盘缓存），通过 `<track>` 在原画与转码两种模式下均可切换
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
 - 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
@@ -162,11 +162,16 @@ environment:
 
 ```
 Movies/Movie.mkv
-Movies/Movie.srt            # 无名后缀，展示为「字幕」
-Movies/Movie.zh-CN.ass      # 简体中文（默认开启）
-Movies/Movie.en.srt         # English
-Movies/Movie.default.vtt    # default 后缀同样视为默认字幕
+Movies/Movie.srt              # 无名后缀，展示为「字幕」
+Movies/Movie.zh-CN.ass        # 简体中文（默认开启）
+Movies/Movie.en.sdh.srt       # English（SDH），展示为「English（SDH）」
+Movies/Movie.zh-CN.forced.ass # 简体中文（强制），不会被选为默认轨道
+Movies/Movie.default.vtt      # default 后缀同样视为默认字幕
+Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（Jellyfin 风格）
 ```
+
+命名分隔符支持 `.`、空格、`-`、`_`（如 `Movie-en.srt`、`Movie_en.srt`）；
+标记后缀 `sdh/cc/hi` 识别为听障字幕，`forced/force` 识别为强制字幕，排序时普通字幕优先于强制/SDH、中文优先于英文。
 
 - 支持 `.srt` / `.vtt` / `.ass` / `.ssa` 文本字幕；服务端把 SRT 时间戳（逗号→点号、去序号）与 ASS/SSA 的 `Dialogue` 行（剥离样式覆盖块、`\N` 换行）统一转成浏览器可靠支持的 **WebVTT**，原生 `.vtt` 直接透传；
 - 语言标签覆盖中英日韩法德西俄意葡泰越阿印等常见代码（含 `zh-CN/zh-Hant/chs/cht` 等别名），未识别的后缀原样展示、不丢弃；

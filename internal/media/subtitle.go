@@ -14,14 +14,22 @@ var DefaultSubExts = map[string]bool{
 	".srt": true, ".vtt": true, ".ass": true, ".ssa": true,
 }
 
-// Subtitle 表示与视频同目录的一个外挂字幕文件。
+// subtitleDirs 是视频目录下可能集中存放字幕的子目录名（大小写不敏感），
+// 兼容 Jellyfin/Emby 把字幕放在 subs/subtitles 子目录的组织方式。
+var subtitleDirs = map[string]bool{
+	"subs": true, "subtitles": true, "字幕": true,
+}
+
+// Subtitle 表示与视频同目录（或其字幕子目录）的一个外挂字幕文件。
 type Subtitle struct {
 	ID      string `json:"id"`      // 视频内唯一的字幕 ID（由相对路径派生）
-	Name    string `json:"name"`    // 展示名，如「简体中文」「English」
+	Name    string `json:"name"`    // 展示名，如「简体中文」「English（强制）」
 	Lang    string `json:"lang"`    // 语言代码（zh/zh-Hans/en/...），无法识别时为 "und"
 	Format  string `json:"format"`  // srt | vtt | ass | ssa
 	RelPath string `json:"relPath"` // 相对媒体根目录的路径
-	Default bool   `json:"default"` // 是否建议默认开启（中文/默认后缀字幕）
+	SDH     bool   `json:"sdh"`     // 听障字幕（含音效描述）
+	Forced  bool   `json:"forced"`  // 强制字幕（仅外来语言片段）
+	Default bool   `json:"default"` // 是否建议默认开启（排序后的首选轨道）
 	absPath string
 }
 
@@ -43,109 +51,241 @@ func videoExtList(l *Library) []string {
 	return exts
 }
 
-// findSubtitles 在视频所在目录查找与视频同名（可带语言后缀）的外挂字幕。
-// 命中规则（不区分大小写）：
-//   - 精确同名：Movie.srt 对应 Movie.mkv
-//   - 语言/标签后缀：Movie.zh.srt、Movie.zh-CN.ass、Movie.default.srt
-//
-// 其余命名（如 Movie.part1.srt）不自动挂载，避免误关联同目录其他视频。
+// findSubtitles 查找与视频关联的外挂字幕：
+//   - 视频同目录，以及其中的 subs/subtitles/字幕 子目录；
+//   - 命名兼容 Jellyfin/Emby：Movie.srt、Movie.en.srt、Movie.zh-CN.forced.ass、
+//     Movie.default.srt，分隔符支持 '.' ' ' '-' '_'；
+//   - 解析语言、SDH（sdh/cc/hi）、强制（forced/force）标记。
 func findSubtitles(root string, v *Video) []*Subtitle {
 	dir := filepath.Dir(v.AbsPath())
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
+	candidates := []string{dir}
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() && subtitleDirs[strings.ToLower(e.Name())] {
+				candidates = append(candidates, filepath.Join(dir, e.Name()))
+			}
+		}
 	}
 
 	var subs []*Subtitle
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		ext := strings.ToLower(filepath.Ext(name))
-		if !DefaultSubExts[ext] {
-			continue
-		}
-		stem := strings.TrimSuffix(name, filepath.Ext(name))
-		if !subtitleStemMatch(stem, v.Name) {
-			continue
-		}
-		abs := filepath.Join(dir, name)
-		rel, err := filepath.Rel(root, abs)
+	seen := map[string]bool{}
+	for _, cdir := range candidates {
+		files, err := os.ReadDir(cdir)
 		if err != nil {
 			continue
 		}
-		lang, label := parseSubtitleLang(stem, v.Name)
-		subs = append(subs, &Subtitle{
-			ID:      makeSubID(filepath.ToSlash(rel)),
-			Name:    label,
-			Lang:    lang,
-			Format:  strings.TrimPrefix(ext, "."),
-			RelPath: filepath.ToSlash(rel),
-			Default: lang == "zh" || lang == "zh-Hans" || lang == "zh-Hant" ||
-				strings.EqualFold(stem, v.Name+".default"),
-			absPath: abs,
-		})
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			name := f.Name()
+			ext := strings.ToLower(filepath.Ext(name))
+			if !DefaultSubExts[ext] {
+				continue
+			}
+			stem := strings.TrimSuffix(name, filepath.Ext(name))
+			if !subtitleStemMatch(stem, v.Name) {
+				continue
+			}
+			abs := filepath.Join(cdir, name)
+			rel, err := filepath.Rel(root, abs)
+			if err != nil {
+				continue
+			}
+			rel = filepath.ToSlash(rel)
+			id := makeSubID(rel)
+			if seen[id] { // 同名子目录与根目录去重
+				continue
+			}
+			seen[id] = true
+			subs = append(subs, parseSubtitle(id, abs, rel, ext, stem, v.Name))
+		}
 	}
 
-	// 稳定排序：默认字幕优先，其次按相对路径，保证前端展示与测试可预期
-	sort.Slice(subs, func(i, j int) bool {
-		if subs[i].Default != subs[j].Default {
-			return subs[i].Default
+	sortSubtitles(subs)
+	// 默认轨道：排序后的第一条非强制字幕（强制字幕只在外语片段出现，不应默认开启）
+	for _, s := range subs {
+		if !s.Forced {
+			s.Default = true
+			break
 		}
-		return subs[i].RelPath < subs[j].RelPath
-	})
+	}
 	return subs
 }
 
-// subtitleStemMatch 判断字幕文件名（去扩展名）是否与视频同名或为「同名.语言标签」形式。
-// 只接受已知语言标签或 default 后缀，避免 Movie.part1.srt 这类无关文件被误挂载。
+// subtitleStemMatch 判断字幕文件名（去扩展名）是否与视频同名，或为「同名+分隔符+标签」。
+// 标签首段必须是已知语言、default/sdh/forced 等标记，避免 Movie.part1.srt 被误挂载。
 func subtitleStemMatch(stem, videoBase string) bool {
 	if stem == videoBase {
 		return true
 	}
-	prefix := videoBase + "."
-	if !strings.HasPrefix(stem, prefix) {
+	if len(stem) <= len(videoBase) || !strings.HasPrefix(stem, videoBase) {
 		return false
 	}
-	suffix := strings.ToLower(strings.TrimPrefix(stem, prefix))
-	first := strings.SplitN(suffix, ".", 2)[0]
-	first = strings.ReplaceAll(first, "_", "-")
-	if first == "default" {
+	switch stem[len(videoBase)] {
+	case '.', ' ', '-', '_':
+	default:
+		return false
+	}
+	tokens := splitSubTokens(strings.TrimPrefix(stem, videoBase))
+	if len(tokens) == 0 {
+		return false
+	}
+	first := normalizeToken(tokens[0])
+	if first == "default" || first == "sdh" || first == "cc" || first == "hi" ||
+		first == "forced" || first == "force" {
 		return true
 	}
-	if _, ok := languageNames[first]; ok {
-		return true
-	}
-	return false
+	_, ok := languageNames[first]
+	return ok
 }
 
-// parseSubtitleLang 从字幕文件名的语言后缀解析语言代码与展示名。
-// 如 "Movie.zh-CN" → ("zh-Hans", "简体中文")，"Movie.en" → ("en", "English")。
-func parseSubtitleLang(stem, videoBase string) (code, label string) {
-	suffix := strings.TrimPrefix(stem, videoBase)
-	suffix = strings.TrimPrefix(suffix, ".")
-	if suffix == "" {
-		return "und", "字幕"
+// parseSubtitle 从文件名后缀解析语言、SDH/强制标记与展示名。
+func parseSubtitle(id, abs, rel, ext, stem, videoBase string) *Subtitle {
+	s := &Subtitle{
+		ID:      id,
+		Format:  strings.TrimPrefix(ext, "."),
+		RelPath: rel,
+		absPath: abs,
 	}
-	// 可能有多段后缀（zh-CN.forced），取第一段作为语言
-	first := strings.ToLower(strings.SplitN(suffix, ".", 2)[0])
-	first = strings.ReplaceAll(first, "_", "-")
+	tokens := splitSubTokens(strings.TrimPrefix(stem, videoBase))
+	rawSuffix := strings.Join(tokens, ".")
+	for _, tok := range tokens {
+		t := normalizeToken(tok)
+		if s.Lang == "" || s.Lang == "und" {
+			if code, ok := resolveLang(t); ok {
+				s.Lang = code
+			}
+		}
+		switch t {
+		case "sdh", "cc", "hi":
+			s.SDH = true
+		case "forced", "force":
+			s.Forced = true
+		case "default":
+			s.Default = true
+		}
+	}
+	if s.Lang == "" {
+		s.Lang = "und"
+	}
+	s.Name = subtitleDisplayName(s, rawSuffix)
+	return s
+}
 
-	if first == "default" {
-		return "und", "默认字幕"
+// splitSubTokens 按 . 空格 - _ 拆分后缀标签。
+func splitSubTokens(suffix string) []string {
+	return strings.FieldsFunc(suffix, func(r rune) bool {
+		return r == '.' || r == ' ' || r == '-' || r == '_'
+	})
+}
+
+// normalizeToken 统一小写并把下划线转为连字符（zh_cn → zh-cn）。
+func normalizeToken(tok string) string {
+	return strings.ReplaceAll(strings.ToLower(tok), "_", "-")
+}
+
+func subtitleDisplayName(s *Subtitle, rawSuffix string) string {
+	var b strings.Builder
+	switch {
+	case s.Lang != "und":
+		if name, ok := languageNames[langKeyFor(s.Lang)]; ok {
+			b.WriteString(name)
+		} else {
+			b.WriteString(s.Lang)
+		}
+	case rawSuffix != "":
+		b.WriteString(rawSuffix)
+	default:
+		b.WriteString("字幕")
 	}
-	if name, ok := languageNames[first]; ok {
-		return normalizeLang(first), name
+	if s.Forced {
+		b.WriteString("（强制）")
 	}
-	// 未知标签：原样展示，避免丢失信息
-	return "und", suffix
+	if s.SDH {
+		b.WriteString("（SDH）")
+	}
+	return b.String()
+}
+
+// resolveLang 把文件名中的语言 token（含 ISO 639-2/中文别名/带区域写法）解析为归一语言码。
+func resolveLang(tok string) (string, bool) {
+	if code, ok := langAliases[tok]; ok {
+		return code, true
+	}
+	if _, ok := languageNames[tok]; ok {
+		return normalizeLang(tok), true
+	}
+	return "", false
+}
+
+// langKeyFor 把归一化后的语言代码映射回 languageNames 使用的键。
+func langKeyFor(lang string) string {
+	switch lang {
+	case "zh-Hans":
+		return "zh-hans"
+	case "zh-Hant":
+		return "zh-hant"
+	default:
+		return strings.ToLower(lang)
+	}
+}
+
+// langAliases 文件名语言 token → 归一语言码（含 ISO 639-2 与常见别名）。
+var langAliases = map[string]string{
+	"zh": "zh-Hans", "chs": "zh-Hans", "chi": "zh-Hans", "zho": "zh-Hans",
+	"cn": "zh-Hans", "sc": "zh-Hans", "chinese": "zh-Hans",
+	"zh-cn": "zh-Hans", "zh-hans": "zh-Hans", "zh-sg": "zh-Hans",
+	"cht": "zh-Hant", "tc": "zh-Hant", "zh-tw": "zh-Hant",
+	"zh-hk": "zh-Hant", "zh-hant": "zh-Hant",
+	"en": "en", "eng": "en", "english": "en",
+	"ja": "ja", "jpn": "ja", "japanese": "ja",
+	"ko": "ko", "kor": "ko", "korean": "ko",
+	"fr": "fr", "fre": "fr", "fra": "fr", "french": "fr",
+	"de": "de", "ger": "de", "deu": "de", "german": "de",
+	"es": "es", "spa": "es", "spanish": "es",
+	"ru": "ru", "rus": "ru", "russian": "ru",
+	"it": "it", "ita": "it", "italian": "it",
+	"pt": "pt", "por": "pt", "portuguese": "pt",
+	"th": "th", "tha": "th", "thai": "th",
+	"vi": "vi", "vie": "vi", "vietnamese": "vi",
+	"ar": "ar", "ara": "ar", "arabic": "ar",
+	"hi": "hi", "hin": "hi", "hindi": "hi",
+}
+
+// sortSubtitles 排序：非强制优先、非 SDH 优先、中文 > 英文 > 其他可识别语言 > 未知，最后按路径兜底。
+func sortSubtitles(list []*Subtitle) {
+	langRank := func(lang string) int {
+		switch lang {
+		case "zh", "zh-Hans", "zh-Hant":
+			return 0
+		case "en":
+			return 1
+		case "und":
+			return 3
+		default:
+			return 2
+		}
+	}
+	sort.Slice(list, func(i, j int) bool {
+		a, b := list[i], list[j]
+		if a.Forced != b.Forced {
+			return !a.Forced
+		}
+		if a.SDH != b.SDH {
+			return !a.SDH
+		}
+		if ra, rb := langRank(a.Lang), langRank(b.Lang); ra != rb {
+			return ra < rb
+		}
+		return a.RelPath < b.RelPath
+	})
 }
 
 // normalizeLang 把常见中文写法归一到 BCP-47 风格代码。
 func normalizeLang(code string) string {
 	switch code {
-	case "zh-cn", "zh-hans", "zh-sg", "chs", "sc":
+	case "zh-cn", "zh-hans", "zh-sg", "chs", "sc", "chi", "zho", "cn", "chinese":
 		return "zh-Hans"
 	case "zh-tw", "zh-hk", "zh-hant", "cht", "tc":
 		return "zh-Hant"
@@ -154,23 +294,24 @@ func normalizeLang(code string) string {
 	}
 }
 
-// languageNames 语言代码 → 中文展示名。
+// languageNames 语言代码（小写）→ 展示名。同时承担「已知语言标签」白名单职责。
 var languageNames = map[string]string{
 	"zh": "中文", "zh-cn": "简体中文", "zh-hans": "简体中文", "chs": "简体中文", "sc": "简体中文",
+	"chi": "简体中文", "zho": "简体中文", "cn": "简体中文", "chinese": "简体中文",
 	"zh-tw": "繁体中文", "zh-hk": "繁体中文", "zh-hant": "繁体中文", "cht": "繁体中文", "tc": "繁体中文",
-	"en": "English", "eng": "English",
-	"ja": "日本語", "jpn": "日本語", "jp": "日本語",
-	"ko": "한국어", "kor": "한국어",
-	"fr": "Français", "fre": "Français",
-	"de": "Deutsch", "ger": "Deutsch",
-	"es": "Español", "spa": "Español",
-	"ru": "Русский", "rus": "Русский",
-	"it": "Italiano", "ita": "Italiano",
-	"pt": "Português", "por": "Português",
-	"th": "ไทย", "tha": "ไทย",
-	"vi": "Tiếng Việt", "vie": "Tiếng Việt",
-	"ar": "العربية", "ara": "العربية",
-	"hi": "हिन्दी", "hin": "हिन्दी",
+	"en": "English", "eng": "English", "english": "English",
+	"ja": "日本語", "jpn": "日本語", "jp": "日本語", "japanese": "日本語",
+	"ko": "한국어", "kor": "한국어", "korean": "한국어",
+	"fr": "Français", "fre": "Français", "fra": "Français", "french": "Français",
+	"de": "Deutsch", "ger": "Deutsch", "deu": "Deutsch", "german": "Deutsch",
+	"es": "Español", "spa": "Español", "spanish": "Español",
+	"ru": "Русский", "rus": "Русский", "russian": "Русский",
+	"it": "Italiano", "ita": "Italiano", "italian": "Italiano",
+	"pt": "Português", "por": "Português", "portuguese": "Português",
+	"th": "ไทย", "tha": "ไทย", "thai": "ไทย",
+	"vi": "Tiếng Việt", "vie": "Tiếng Việt", "vietnamese": "Tiếng Việt",
+	"ar": "العربية", "ara": "العربية", "arabic": "العربية",
+	"hi": "हिन्दी", "hin": "हिन्दी", "hindi": "हिन्दी",
 }
 
 // makeSubID 用字幕相对路径的 sha1 前 12 位作为 ID。
