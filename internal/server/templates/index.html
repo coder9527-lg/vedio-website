@@ -51,10 +51,15 @@
     <div class="video-grid">
       {{range .Videos}}
       {{$p := index $.State.Progress .ID}}
+      {{$md := index $.Metadata .ID}}
       <div class="video-card-wrap">
         <a class="video-card" href="/watch/{{.ID}}">
           <div class="thumb-wrap">
+            {{if and $md $md.PosterPath}}
+            <img class="thumb" src="/artwork/{{.ID}}/poster" alt="{{.Name}}" loading="lazy">
+            {{else}}
             <img class="thumb" src="/thumb/{{.ID}}" alt="{{.Name}}" loading="lazy">
+            {{end}}
             <span class="ext-badge">{{.Ext}}</span>
             {{if index $.State.Favs .ID}}<span class="fav-badge" title="已收藏">⭐</span>{{end}}
             {{if hasProgress $p.Position $p.Duration}}
@@ -64,8 +69,16 @@
             {{end}}
           </div>
           <div class="meta">
+            {{if and $md $md.Title}}
+            <h2 class="video-name" title="{{.RelPath}}">{{$md.Title}}{{if $md.Year}} <span class="meta-year">({{$md.Year}})</span>{{end}}</h2>
+            {{if ne $md.Title .Name}}<p class="video-original-name">{{.Name}}</p>{{end}}
+            {{else}}
             <h2 class="video-name" title="{{.RelPath}}">{{.Name}}</h2>
+            {{end}}
             <p class="video-path">{{.RelPath}}</p>
+            {{if and $md $md.Rating}}
+            <p class="meta-rating">⭐ {{printf "%.1f" $md.Rating}}{{if $md.Runtime}} · {{$md.Runtime}} 分钟{{end}}{{if $md.Genres}} · {{index $md.Genres 0}}{{end}}</p>
+            {{end}}
             {{if hasProgress $p.Position $p.Duration}}
             <p class="resume-hint">▶ 看到 {{formatDuration $p.Position}}{{if gt $p.Duration 0.0}} / {{formatDuration $p.Duration}}{{end}}</p>
             {{end}}

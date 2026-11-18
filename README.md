@@ -12,6 +12,7 @@
 - 🔊 **多音轨支持**：ffprobe 自动探测视频中的多路音轨（语言/标题），转码时产出带 `EXT-X-MEDIA` 音频分组的 master 播放列表，播放页可在音轨菜单中切换；单音轨视频保持简单布局不变
 - 💬 **外挂字幕自动挂载**：同目录或 `subs/`/`subtitles/`/`字幕/` 子目录中同名（可带语言/SDH/强制后缀，如 `Movie.zh-CN.srt`、`Movie.en.forced.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端纯 Go 统一转 WebVTT（无需额外进程/磁盘缓存），通过 `<track>` 在原画与转码两种模式下均可切换
 - 📝 **内嵌字幕提取**：转码时自动把视频内封装的文本字幕（SRT/ASS/WebVTT/MOV_TEXT）提取为 WebVTT 并挂进同一个字幕菜单（标注「[内嵌]」）；位图字幕（PGS/DVD 等）仅识别不提取
+- 🎞️ **NFO 元信息与本地海报**：自动识别 Kodi/Jellyfin 风格的 `movie.nfo` / 同名 `.nfo`（片名、年份、片长、评分、类型、导演、主演、剧情简介等），以及同目录命名约定的海报/背景图（`*-poster.jpg`、`folder.jpg`、`*.fanart.jpg` 等）；首页卡片优先展示海报与正式片名，播放页呈现完整影片资料，NFO/图片增删由文件监听自动刷新，无需重扫
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
 - 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
@@ -100,6 +101,8 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | POST | `/api/v1/rescan` | 重新扫描媒体目录（自动清理已删除视频的孤儿进度/收藏） |
 | GET | `/stream/{id}` | 视频流（支持 Range；加 `?download=1` 触发下载） |
 | GET | `/thumb/{id}` | 缩略图（自动生成并缓存） |
+| GET | `/api/v1/videos/{id}/metadata` | 刮削元信息（NFO 解析结果 + 本地海报路径，无元信息时 404） |
+| GET | `/artwork/{id}/poster` · `/artwork/{id}/backdrop` | 本地海报 / 背景图（仅限媒体根目录内的图片，白名单扩展名） |
 | GET | `/api/v1/videos/{id}/transcode` | 启动/查询 HLS 转码会话状态（排队返回 429，前端轮询） |
 | GET | `/hls/{id}/index.m3u8` | HLS 入口播放列表（单音轨返回 index，多音轨返回 master 内容，`no-store`） |
 | GET | `/hls/{id}/{asset...}` | HLS 媒体播放列表与 mpegts 分片（变体 `out-*`，文件名白名单校验，防路径穿越） |
@@ -182,6 +185,20 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 
 > 转码是 CPU 密集型任务，低配 NAS 建议把 `TRANSCODE_MAX` 设为 `1`，并优先在局域网内使用。
 
+## 海报与元信息（NFO）
+
+无需任何配置，把刮削器（tinyMediaManager、Kodi、Jellyfin 导出等）生成的 NFO 与图片放在视频同目录即可自动识别：
+
+- **NFO 文件**：优先读取与视频同名的 `<片名>.nfo`，其次目录级 `movie.nfo`；兼容新版 `<ratings><rating><value>` 与旧版纯文本 `<rating>` 两种评分写法，年份缺失时从 `<premiered>` 提取，单个 `<genre>` 内的 `/`、`,`、`|` 分隔值会自动拆开
+- **海报/背景图命名约定**（jpg/jpeg/png/webp）：
+  - 与视频同名：`<片名>-poster.jpg`、`<片名>.fanart.jpg`（分隔符支持 `-`/`_`/`.`/空格）
+  - 目录级通用图：`poster.jpg`、`cover.jpg`、`folder.jpg`（海报）；`fanart.jpg`、`backdrop.jpg`、`background.jpg`（背景图）
+  - NFO 内 `<art><poster>`/`<art><fanart>` 指向的路径同样支持（绝对路径或相对 NFO 的相对路径）
+- **展示规则**：有海报时首页卡片与播放页封面使用海报，否则回退 ffmpeg 缩略图；片名、年份、评分、片长、类型展示在卡片上，播放页另有剧情简介、导演、主演、出品方与背景图横幅
+- **自动刷新**：NFO/图片的新增、替换、删除由 fsnotify 防抖后增量生效，不需要手动重新扫描；`/artwork/*` 只提供媒体根目录内、扩展名白名单内的登记图片，带路径穿越防护
+
+> TMDB 等在线刮削尚未接入，目前只读取本地 NFO 与图片；路线图中的在线刮削会复用同一套 `Metadata` 结构与展示链路。
+
 ## 设计说明
 
 - **存储可选、默认无数据库**：视频索引保存在内存中，启动时全量扫描，运行期由 fsnotify 监听增量维护（可选定时全量兜底）；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。只有显式设置 `DB_PATH` 才启用 SQLite，用于播放进度与收藏。
@@ -197,4 +214,5 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - [x] 外挂字幕自动挂载（SRT/VTT/ASS/SSA → WebVTT，原画/转码通用，见「外挂字幕」）
 - [x] 多音轨支持（ffprobe 探测 + HLS 音频分组，播放页切换）
 - [x] 内嵌文本字幕提取为 WebVTT（转码启动时 ffmpeg 导出 `sub-N.vtt` 并复用字幕菜单；位图字幕 PGS/DVD 等暂不支持）
-- [ ] 海报/元信息刮削（NFO、TMDB）
+- [x] 海报/元信息刮削：本地 NFO（Kodi/Jellyfin 兼容）+ 海报/背景图命名约定，文件监听自动刷新（见「海报与元信息（NFO）」）
+- [ ] 在线刮削（TMDB API，补全缺失的 NFO/海报）

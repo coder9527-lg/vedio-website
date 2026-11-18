@@ -38,17 +38,19 @@ type Library struct {
 	root string
 	exts map[string]bool
 
-	mu     sync.RWMutex
-	videos map[string]*Video
-	subs   map[string][]*Subtitle // 视频 ID → 外挂字幕列表
+	mu       sync.RWMutex
+	videos   map[string]*Video
+	subs     map[string][]*Subtitle // 视频 ID → 外挂字幕列表
+	metadata map[string]*Metadata   // 视频 ID → 刮削元信息（NFO/本地海报，可能为 nil）
 }
 
 func NewLibrary(root string, exts map[string]bool) *Library {
 	return &Library{
-		root:   root,
-		exts:   exts,
-		videos: map[string]*Video{},
-		subs:   map[string][]*Subtitle{},
+		root:     root,
+		exts:     exts,
+		videos:   map[string]*Video{},
+		subs:     map[string][]*Subtitle{},
+		metadata: map[string]*Metadata{},
 	}
 }
 
@@ -89,17 +91,22 @@ func (l *Library) Scan() (int, error) {
 		return nil
 	})
 
-	// 全量重建字幕索引：按视频逐个发现同目录外挂字幕
+	// 全量重建字幕与元信息索引：按视频逐个发现同目录外挂字幕、NFO 与海报
 	subs := make(map[string][]*Subtitle, len(found))
+	meta := make(map[string]*Metadata, len(found))
 	for id, v := range found {
 		if s := findSubtitles(l.root, v); len(s) > 0 {
 			subs[id] = s
+		}
+		if md := loadMetadata(l.root, v); md != nil {
+			meta[id] = md
 		}
 	}
 
 	l.mu.Lock()
 	l.videos = found
 	l.subs = subs
+	l.metadata = meta
 	l.mu.Unlock()
 	return len(found), err
 }
@@ -165,6 +172,32 @@ func (l *Library) Query(q Query) []*Video {
 	return out
 }
 
+// Metadata 返回视频的刮削元信息；没有任何 NFO/海报时返回 nil。
+func (l *Library) Metadata(id string) *Metadata {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.metadata[id]
+}
+
+// RefreshMetadata 重新为单个视频加载 NFO 与本地海报/背景图
+// （NFO 或图片独立增删时由 Watcher 调用）。
+func (l *Library) RefreshMetadata(videoID string) {
+	l.mu.RLock()
+	v, ok := l.videos[videoID]
+	l.mu.RUnlock()
+	if !ok {
+		return
+	}
+	md := loadMetadata(l.root, v)
+	l.mu.Lock()
+	if md != nil {
+		l.metadata[videoID] = md
+	} else {
+		delete(l.metadata, videoID)
+	}
+	l.mu.Unlock()
+}
+
 // Get 按 ID 查找视频。
 func (l *Library) Get(id string) (*Video, bool) {
 	l.mu.RLock()
@@ -172,6 +205,9 @@ func (l *Library) Get(id string) (*Video, bool) {
 	v, ok := l.videos[id]
 	return v, ok
 }
+
+// Root 返回媒体库根目录的绝对路径。
+func (l *Library) Root() string { return l.root }
 
 // IsVideoExt 判断扩展名是否为受支持的视频。
 func (l *Library) IsVideoExt(name string) bool {
@@ -246,6 +282,7 @@ func (l *Library) Upsert(path string) (*Video, bool) {
 	}
 	// 刷新该视频的外挂字幕（字幕文件可能与视频先后落地，事件防抖后统一重扫）
 	subtitles := findSubtitles(l.root, v)
+	md := loadMetadata(l.root, v)
 
 	l.mu.Lock()
 	l.videos[v.ID] = v
@@ -253,6 +290,11 @@ func (l *Library) Upsert(path string) (*Video, bool) {
 		l.subs[v.ID] = subtitles
 	} else {
 		delete(l.subs, v.ID)
+	}
+	if md != nil {
+		l.metadata[v.ID] = md
+	} else {
+		delete(l.metadata, v.ID)
 	}
 	l.mu.Unlock()
 	return v, true
@@ -274,6 +316,7 @@ func (l *Library) Remove(path string) int {
 		if v.RelPath == rel || strings.HasPrefix(v.RelPath, rel+"/") {
 			delete(l.videos, id)
 			delete(l.subs, id)
+			delete(l.metadata, id)
 			removed++
 		}
 	}

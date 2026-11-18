@@ -27,14 +27,15 @@ var allowedSorts = map[string]bool{
 
 type indexData struct {
 	basePage
-	Videos  []*media.Video
-	Count   int // 当前视图下的视频数
-	Total   int // 媒体库视频总数
-	State   videoState
-	Query   string // 搜索关键字
-	Sort    string // 当前排序
-	View    string // all | favorites | continue
-	StoreOn bool   // 是否启用持久化
+	Videos   []*media.Video
+	Metadata map[string]*media.Metadata // 视频 ID → 元信息（无元信息的视频不在 map 中）
+	Count    int                        // 当前视图下的视频数
+	Total    int                        // 媒体库视频总数
+	State    videoState
+	Query    string // 搜索关键字
+	Sort     string // 当前排序
+	View     string // all | favorites | continue
+	StoreOn  bool   // 是否启用持久化
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -71,9 +72,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	videos := s.library.Query(query)
+	metaMap := make(map[string]*media.Metadata, len(videos))
+	for _, v := range videos {
+		if md := s.library.Metadata(v.ID); md != nil {
+			metaMap[v.ID] = md
+		}
+	}
 	s.render(w, "index.html", indexData{
 		basePage: basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
 		Videos:   videos,
+		Metadata: metaMap,
 		Count:    len(videos),
 		Total:    s.library.Len(),
 		State:    state,
@@ -95,9 +103,14 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	if subtitles == nil {
 		subtitles = []*media.Subtitle{}
 	}
+	md := s.library.Metadata(v.ID)
+	if md == nil {
+		md = &media.Metadata{}
+	}
 	s.render(w, "watch.html", struct {
 		basePage
 		Video          *media.Video
+		Metadata       *media.Metadata
 		State          videoState
 		StoreOn        bool
 		TranscodeOn    bool
@@ -106,6 +119,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
+		Metadata:       md,
 		State:          state,
 		StoreOn:        s.storeEnabled(),
 		TranscodeOn:    s.transcodeEnabled(),

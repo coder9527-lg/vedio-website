@@ -213,6 +213,8 @@ func (w *Watcher) flush() {
 			removed += w.library.Remove(path)
 			if IsSubtitleExt(path) {
 				w.refreshSiblingSubtitles(path)
+			} else if IsMetadataSidecar(path) {
+				w.refreshSiblingMetadata(path)
 			}
 			continue
 		}
@@ -223,6 +225,11 @@ func (w *Watcher) flush() {
 		if IsSubtitleExt(path) {
 			// 字幕文件增删：刷新同目录同名视频的字幕索引
 			w.refreshSiblingSubtitles(path)
+			continue
+		}
+		if IsMetadataSidecar(path) {
+			// NFO/海报增删：刷新同目录视频的刮削元信息
+			w.refreshSiblingMetadata(path)
 			continue
 		}
 		if _, ok := w.library.Upsert(path); ok {
@@ -254,6 +261,53 @@ func (w *Watcher) refreshSiblingSubtitles(subPath string) {
 		}
 		w.library.RefreshSubtitles(v.ID)
 	}
+}
+
+// refreshSiblingMetadata 在 NFO/海报文件变更后，刷新同目录下视频的元信息。
+// 目录级通用图（folder.jpg / poster.jpg / movie.nfo）会影响整个目录的视频，
+// 因此同目录全部视频都刷新；带视频名前缀的附属文件只刷新匹配的那个。
+func (w *Watcher) refreshSiblingMetadata(sidecarPath string) {
+	dir := filepath.Dir(sidecarPath)
+	stem := strings.TrimSuffix(filepath.Base(sidecarPath), filepath.Ext(sidecarPath))
+	lowerStem := strings.ToLower(stem)
+	for _, v := range w.library.List() {
+		if filepath.Dir(v.AbsPath()) != dir {
+			continue
+		}
+		// 目录级通用名（movie.nfo / poster.jpg / folder.jpg / fanart.png 等）刷新目录内全部视频；
+		// 否则只刷新同名或「视频名+分隔符+标记」（如 movie-poster.jpg）所属的视频
+		if lowerStem == "movie" || isGenericArtMarker(lowerStem) ||
+			lowerStem == strings.ToLower(v.Name) || hasArtMarkerSuffix(lowerStem, strings.ToLower(v.Name)) {
+			w.library.RefreshMetadata(v.ID)
+		}
+	}
+}
+
+// isGenericArtMarker 判断图片 stem 是否为不带视频名前缀的通用海报/背景图名。
+func isGenericArtMarker(stem string) bool {
+	for _, m := range posterFileMarkers {
+		if stem == m {
+			return true
+		}
+	}
+	for _, m := range backdropMarkers {
+		if stem == m {
+			return true
+		}
+	}
+	return false
+}
+
+// hasArtMarkerSuffix 判断图片/NFO 的 stem 是否为「视频名 + 分隔符 + 海报/背景标记」。
+func hasArtMarkerSuffix(stem, videoStem string) bool {
+	for _, markers := range [][]string{posterFileMarkers, backdropMarkers} {
+		for _, marker := range markers {
+			if artStemMatch(stem, videoStem, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // addWatchRecursive 把目录及其全部子目录加入监听。

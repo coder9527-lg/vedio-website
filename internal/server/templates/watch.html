@@ -26,7 +26,12 @@
   </header>
 
   <main class="container watch-container">
-    <h2 class="watch-title" title="{{.Video.RelPath}}">{{.Video.Name}}</h2>
+    <h2 class="watch-title" title="{{.Video.RelPath}}">{{if .Metadata.Title}}{{.Metadata.Title}}{{else}}{{.Video.Name}}{{end}}</h2>
+    {{if and .Metadata.Title (ne .Metadata.Title .Video.Name)}}
+    <p class="watch-original-title">{{.Video.Name}}{{if .Metadata.Original}} · {{.Metadata.Original}}{{end}}</p>
+    {{else if .Metadata.Original}}
+    <p class="watch-original-title">{{.Metadata.Original}}</p>
+    {{end}}
     {{if .TranscodeOn}}
     <div class="player-modes" role="tablist" aria-label="播放模式">
       <button type="button" id="mode-direct" class="mode-btn active" role="tab">原画直链</button>
@@ -60,7 +65,7 @@
     <div class="player-wrap">
       <video id="player" controls preload="metadata" playsinline
              crossorigin="anonymous"
-             poster="/thumb/{{.Video.ID}}"
+             poster="{{if .Metadata.PosterPath}}/artwork/{{.Video.ID}}/poster{{else}}/thumb/{{.Video.ID}}{{end}}"
              src="/stream/{{.Video.ID}}">
         {{range .Subtitles}}
         <track kind="subtitles" src="/subtitles/{{$.Video.ID}}/{{.ID}}/track.vtt"
@@ -81,6 +86,27 @@
       播放进度会自动保存
       {{end}}
     </p>
+    {{end}}
+
+    {{if or .Metadata.Overview .Metadata.Year .Metadata.Runtime .Metadata.Rating .Metadata.Genres .Metadata.Directors .Metadata.Actors .Metadata.Studio}}
+    <section class="movie-meta" {{if .Metadata.BackdropPath}}style="background-image: linear-gradient(rgba(17,24,39,.88), rgba(17,24,39,.95)), url('/artwork/{{.Video.ID}}/backdrop');"{{end}}>
+      {{if .Metadata.PosterPath}}
+      <img class="movie-poster" src="/artwork/{{.Video.ID}}/poster" alt="海报" loading="lazy">
+      {{end}}
+      <div class="movie-meta-body">
+        {{if .Metadata.Overview}}<p class="movie-overview">{{.Metadata.Overview}}</p>{{end}}
+        <dl class="info-list">
+          {{if .Metadata.Year}}<div><dt>年份</dt><dd>{{.Metadata.Year}}</dd></div>{{end}}
+          {{if .Metadata.Runtime}}<div><dt>片长</dt><dd>{{.Metadata.Runtime}} 分钟</dd></div>{{end}}
+          {{if .Metadata.Rating}}<div><dt>评分</dt><dd>⭐ {{printf "%.1f" .Metadata.Rating}}</dd></div>{{end}}
+          {{if .Metadata.Genres}}<div><dt>类型</dt><dd>{{joinStrings .Metadata.Genres " / "}}</dd></div>{{end}}
+          {{if .Metadata.Directors}}<div><dt>导演</dt><dd>{{joinStrings .Metadata.Directors " / "}}</dd></div>{{end}}
+          {{if .Metadata.Actors}}<div><dt>主演</dt><dd>{{joinStrings .Metadata.Actors " / "}}</dd></div>{{end}}
+          {{if .Metadata.Studio}}<div><dt>出品</dt><dd>{{.Metadata.Studio}}</dd></div>{{end}}
+          <div><dt>来源</dt><dd>{{if eq .Metadata.Source "nfo"}}NFO 刮削{{else}}本地文件{{end}}</dd></div>
+        </dl>
+      </div>
+    </section>
     {{end}}
 
     <dl class="info-list">

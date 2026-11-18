@@ -3,6 +3,7 @@ package server
 import (
 	"html/template"
 	"math"
+	"strings"
 )
 
 // tmplFuncs 提供模板里使用的格式化辅助函数。
@@ -30,6 +31,10 @@ var tmplFuncs = template.FuncMap{
 			pct = 100
 		}
 		return pct
+	},
+	// joinStrings 用分隔符连接字符串切片，供元信息列表展示。
+	"joinStrings": func(items []string, sep string) string {
+		return strings.Join(items, sep)
 	},
 	// hasProgress 判断进度记录是否有效（位置大于 5 秒，避免片头抖动）。
 	"hasProgress": func(position, duration float64) bool {

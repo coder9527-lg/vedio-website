@@ -91,7 +91,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /watch/{id}", s.handleWatch)
 	mux.HandleFunc("GET /api/v1/videos", s.handleAPIList)
 	mux.HandleFunc("GET /api/v1/videos/{id}", s.handleAPIGet)
+	mux.HandleFunc("GET /api/v1/videos/{id}/metadata", s.handleAPIMetadata)
 	mux.HandleFunc("POST /api/v1/rescan", s.handleRescan)
+
+	// 本地海报/背景图（NFO 或命名约定发现，仅提供媒体根目录内的图片）
+	mux.HandleFunc("GET /artwork/{id}/poster", s.handleArtwork("poster"))
+	mux.HandleFunc("GET /artwork/{id}/backdrop", s.handleArtwork("backdrop"))
 
 	// 播放进度与收藏（仅在启用持久化时可用，否则返回 503）
 	mux.HandleFunc("GET /api/v1/progress", s.handleProgressList)
