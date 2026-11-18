@@ -68,6 +68,17 @@ func main() {
 			log.Printf("HLS 在线转码已开启（并发上限 %d，空闲超时 %s，缓存目录 %s）",
 				cfg.TranscodeMax, cfg.TranscodeIdleTimeout, cfg.TranscodeDir)
 		}
+		// 位图字幕 OCR（可选）：tesseract 缺失或显式关闭时降级，位图字幕仅识别不提取
+		if transcoder != nil && cfg.OCREnabled {
+			ocr := media.NewOCRer(cfg.TesseractBin, cfg.FFmpeg)
+			if ocr.Available() {
+				transcoder.SetOCRer(ocr)
+				log.Println("位图字幕 OCR 已开启（tesseract 可用）")
+			} else {
+				log.Printf("警告: 未找到 tesseract(%s) 或语言包，位图字幕（PGS/DVD 等）将仅识别不提取",
+					cfg.TesseractBin)
+			}
+		}
 	} else {
 		log.Println("HLS 在线转码已关闭（TRANSCODE_ENABLED=false）")
 	}

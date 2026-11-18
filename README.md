@@ -11,7 +11,7 @@
 - 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖
 - 🔊 **多音轨支持**：ffprobe 自动探测视频中的多路音轨（语言/标题），转码时产出带 `EXT-X-MEDIA` 音频分组的 master 播放列表，播放页可在音轨菜单中切换；单音轨视频保持简单布局不变
 - 💬 **外挂字幕自动挂载**：同目录或 `subs/`/`subtitles/`/`字幕/` 子目录中同名（可带语言/SDH/强制后缀，如 `Movie.zh-CN.srt`、`Movie.en.forced.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端纯 Go 统一转 WebVTT（无需额外进程/磁盘缓存），通过 `<track>` 在原画与转码两种模式下均可切换
-- 📝 **内嵌字幕提取**：转码时自动把视频内封装的文本字幕（SRT/ASS/WebVTT/MOV_TEXT）提取为 WebVTT 并挂进同一个字幕菜单（标注「[内嵌]」）；位图字幕（PGS/DVD 等）仅识别不提取
+- 📝 **内嵌字幕提取**：转码时自动把视频内封装的文本字幕（SRT/ASS/WebVTT/MOV_TEXT）提取为 WebVTT 并挂进同一个字幕菜单（标注「[内嵌]」）；位图字幕（PGS/DVD-VOBSUB/DVB/XSUB）在安装 tesseract 后经 OCR 识别为 WebVTT，未安装时仅识别不提取、静默降级
 - 🎞️ **NFO 元信息与本地海报**：自动识别 Kodi/Jellyfin 风格的 `movie.nfo` / 同名 `.nfo`（片名、年份、片长、评分、类型、导演、主演、剧情简介等），以及同目录命名约定的海报/背景图（`*-poster.jpg`、`folder.jpg`、`*.fanart.jpg` 等）；首页卡片优先展示海报与正式片名，播放页呈现完整影片资料，NFO/图片增删由文件监听自动刷新，无需重扫
 - 🌐 **TMDB 在线刮削**（可选）：配置 `TMDB_API_KEY` 后在播放页一键搜索 TMDB 候选、人工确认后自动下载海报/背景图并补齐缺失元信息；本地 NFO 优先，结果持久化到缓存目录、重启自动恢复；未配置时功能静默关闭
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
@@ -80,6 +80,8 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `TRANSCODE_DIR` | `/data/transcode` | HLS 分片（m3u8/ts）缓存目录，位于持久化卷内；启动时清空残留 |
 | `TRANSCODE_MAX` | `2` | 同时运行的 ffmpeg 转码任务上限，超出的任务排队，按 NAS CPU 性能调整 |
 | `TRANSCODE_IDLE_TIMEOUT` | `30m` | 会话无人访问后多久停止转码进程（已产出分片保留，再次观看自动重转） |
+| `OCR_ENABLED` | `true` | 是否启用位图字幕 OCR；设为 `false` 关闭，或 tesseract 缺失/无语言包时自动降级（位图字幕仅识别不提取） |
+| `TESSERACT_BIN` | `tesseract` | tesseract OCR 可执行文件路径；需另行安装 tesseract 及所需语言包（如 `chi_sim`、`eng`） |
 | `DB_PATH` | 空（关闭） | SQLite 数据库文件路径（如 `/data/vedio.db`），开启播放进度与收藏；留空禁用持久化，接口返回 503 且页面隐藏相关入口 |
 | `PUID` / `PGID` | `0` / `0` | 容器内运行用户 UID/GID（NAS 权限适配） |
 | `TZ` | `Asia/Shanghai` | 时区 |
@@ -189,7 +191,8 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - 语言标签覆盖中英日韩法德西俄意葡泰越阿印等常见代码（含 `zh-CN/zh-Hant/chs/cht` 等别名），未识别的后缀原样展示、不丢弃；
 - 字幕经标准 `<track>` 挂载，**原画直链与 HLS 转码两种播放模式通用**，播放页「字幕」菜单可开关；中文/`default` 字幕默认开启；
 - 文件监听覆盖字幕增删：拷贝进来或删除字幕文件后（防抖窗口结束）自动刷新关联，无需重扫；
-- **内嵌字幕**：视频内封装的文本字幕（subrip/ASS/WebVTT/MOV_TEXT 等）在转码启动时由 ffmpeg 逐路提取为转码目录下的 `sub-N.vtt`（自动把 `MM:SS.mmm` 规整为标准 `HH:MM:SS.mmm`），与外挂字幕共用播放页「字幕」菜单，名称带「[内嵌]」前缀；位图字幕（PGS/DVD-VOBSUB/DVB/XSUB）受技术限制无法转 WebVTT，仅识别不提取，转码主流程仍以 `-sn` 丢弃其图像流。
+- **内嵌字幕**：视频内封装的文本字幕（subrip/ASS/WebVTT/MOV_TEXT 等）在转码启动时由 ffmpeg 逐路提取为转码目录下的 `sub-N.vtt`（自动把 `MM:SS.mmm` 规整为标准 `HH:MM:SS.mmm`），与外挂字幕共用播放页「字幕」菜单，名称带「[内嵌]」前缀。
+- **位图字幕 OCR（可选）**：PGS/DVD-VOBSUB/DVB/XSUB 等位图字幕只有图像、没有文本，需要额外安装 [tesseract OCR](https://github.com/tesseract-ocr/tesseract) 及语言包（简体中文 `chi_sim`、英文 `eng` 等，Debian 系为 `tesseract-ocr` 与 `tesseract-ocr-chi-sim`，macOS 为 `brew install tesseract tesseract-lang`）。启用后转码时先用 ffmpeg 把位图字幕解码为带时间戳的 PNG 帧，再由 tesseract 逐帧识别，相邻重复帧自动合并为同一条 WebVTT cue，产出同样的 `sub-N.vtt` 并入字幕菜单；语言按字幕轨标签自动选择（中文优先 `chi_sim`/`chi_tra`，缺语言包回退英文）。未安装 tesseract、缺少语言包或设 `OCR_ENABLED=false` 时静默降级为「仅识别不提取」，转码主流程仍以 `-sn` 丢弃图像流，不影响其他功能。为保持镜像精简，默认镜像不含 tesseract；容器内需要时可基于本镜像自行 `apk add --no-cache tesseract-ocr tesseract-ocr-data-chi_sim`（语言包名随 Alpine 版本略有差异）。
 
 > 转码是 CPU 密集型任务，低配 NAS 建议把 `TRANSCODE_MAX` 设为 `1`，并优先在局域网内使用。
 

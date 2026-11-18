@@ -22,6 +22,10 @@ type Config struct {
 	TranscodeMax         int           // 同时运行的 ffmpeg 转码任务上限
 	TranscodeIdleTimeout time.Duration // 无客户端后多久停止转码进程（分片保留）
 
+	// 位图字幕 OCR：把 PGS/DVD 等位图字幕经 tesseract 识别为 WebVTT（可选依赖）
+	OCREnabled   bool   // 是否启用位图字幕 OCR，tesseract 缺失时自动降级
+	TesseractBin string // tesseract 可执行文件路径
+
 	WatchEnabled   bool          // 是否启用文件监听自动扫描
 	WatchDebounce  time.Duration // 文件事件防抖窗口
 	RescanInterval time.Duration // 定时全量兜底扫描间隔，0 表示关闭
@@ -61,6 +65,9 @@ func Load() *Config {
 		TranscodeDir:         getenv("TRANSCODE_DIR", "/data/transcode"),
 		TranscodeMax:         parseInt("TRANSCODE_MAX", 2),
 		TranscodeIdleTimeout: parseDuration("TRANSCODE_IDLE_TIMEOUT", 30*time.Minute),
+
+		OCREnabled:   getenv("OCR_ENABLED", "true") != "false",
+		TesseractBin: getenv("TESSERACT_BIN", "tesseract"),
 
 		WatchEnabled:   getenv("WATCH_ENABLED", "true") != "false",
 		WatchDebounce:  parseDuration("WATCH_DEBOUNCE", 2*time.Second),

@@ -81,6 +81,7 @@ type Transcoder struct {
 	ffprobe       string
 	maxConcurrent int
 	idleTimeout   time.Duration
+	ocr           *OCRer // 可选：位图字幕（PGS/DVD 等）OCR 转 WebVTT，nil 则跳过位图轨
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -89,6 +90,12 @@ type Transcoder struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	wg       sync.WaitGroup // 等待全部 ffmpeg 进程退出
+}
+
+// SetOCRer 注入位图字幕 OCR 器。未注入或 OCR 不可用时，位图字幕轨保持
+// 「仅识别不提取」的原有行为。必须在首个转码会话启动前调用。
+func (t *Transcoder) SetOCRer(ocr *OCRer) {
+	t.ocr = ocr
 }
 
 // NewTranscoder 创建转码器并清空旧的转码产物（残留的临时目录不可信）。
@@ -380,15 +387,21 @@ func (t *Transcoder) rewriteOnce(master string, tracks []AudioTrack) {
 	}
 }
 
-// extractSubtitles 把可提取的文本内嵌字幕逐路导出为转码目录下的 sub-<序号>.vtt。
-// 序号与 ProbeSubtitles 返回的列表下标一致；位图轨与提取失败的轨不会产出文件，
-// 处理器按文件是否存在返回 404。任一轨失败不影响其余轨与主转码。
+// extractSubtitles 把内嵌字幕逐路导出为转码目录下的 sub-<序号>.vtt。
+// 文本轨（SRT/ASS/WebVTT 等）由 ffmpeg 直接转码；位图轨（PGS/DVD 等）在 OCR 器
+// 可用时经 tesseract 识别为 WebVTT，OCR 不可用则跳过。序号与 ProbeSubtitles 返回
+// 的列表下标一致；未产出文件的轨由处理器按文件是否存在返回 404。任一轨失败不影响
+// 其余轨与主转码。
 func (t *Transcoder) extractSubtitles(sess *session, tracks []SubtitleTrack) {
 	for i, tr := range tracks {
+		out := filepath.Join(sess.dir, fmt.Sprintf("%s%d.vtt", hlsSubPrefix, i))
+		if tr.Bitmap {
+			t.extractBitmapSubtitle(sess, tr, i, out)
+			continue
+		}
 		if !tr.Text {
 			continue
 		}
-		out := filepath.Join(sess.dir, fmt.Sprintf("%s%d.vtt", hlsSubPrefix, i))
 		ctx, cancel := context.WithTimeout(t.ctx, subtitleExtractTimeout)
 		cmd := exec.CommandContext(ctx, t.ffmpeg,
 			"-y", "-v", "error",
@@ -410,6 +423,25 @@ func (t *Transcoder) extractSubtitles(sess *session, tracks []SubtitleTrack) {
 		}
 		log.Printf("已提取内嵌字幕 %s 流#%d → %s.vtt", sess.video.RelPath, tr.Index, strconv.Itoa(i))
 	}
+}
+
+// extractBitmapSubtitle 用 OCR 把单条位图字幕流转成 sub-<序号>.vtt。
+// OCR 器未注入、tesseract/语言包不可用或识别失败时仅记录日志并跳过，不影响主转码。
+func (t *Transcoder) extractBitmapSubtitle(sess *session, tr SubtitleTrack, ordinal int, out string) {
+	if t.ocr == nil || !t.ocr.Available() {
+		log.Printf("位图字幕 %s 流#%d 无 OCR 环境（tesseract/语言包缺失），跳过",
+			sess.video.RelPath, tr.Index)
+		return
+	}
+	ctx, cancel := context.WithTimeout(t.ctx, ocrTimeout)
+	defer cancel()
+	if err := t.ocr.ConvertBitmapSubtitle(ctx, sess.video.AbsPath(), tr, out); err != nil {
+		log.Printf("位图字幕 OCR 失败 %s 流#%d: %v", sess.video.RelPath, tr.Index, err)
+		_ = os.Remove(out) // 清理可能残留的半成品
+		return
+	}
+	log.Printf("已 OCR 位图字幕 %s 流#%d → %s.vtt",
+		sess.video.RelPath, tr.Index, strconv.Itoa(ordinal))
 }
 
 // vttShortTimeRE 匹配缺少小时段的 VTT 时间戳 MM:SS.mmm（可能出现在 cue 行的起止两侧）。
