@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,7 +86,7 @@ func TestTranscoderEndToEnd(t *testing.T) {
 	}
 	v := lib.List()[0]
 
-	tc, err := NewTranscoder(t.TempDir(), "ffmpeg", 1, time.Minute)
+	tc, err := NewTranscoder(t.TempDir(), "ffmpeg", "ffprobe", 1, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestTranscoderBusyAndQueue(t *testing.T) {
 		}
 	}
 
-	tc, err := NewTranscoder(t.TempDir(), "ffmpeg", 1, time.Minute)
+	tc, err := NewTranscoder(t.TempDir(), "ffmpeg", "ffprobe", 1, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +201,155 @@ func TestTranscoderBusyAndQueue(t *testing.T) {
 	}
 }
 
+func TestAssetPathValidation(t *testing.T) {
+	dir := t.TempDir()
+	sess := newSession(&Video{ID: "abc"}, dir)
+
+	// 简单布局文件
+	for _, name := range []string{"seg-00001.ts", "index.m3u8"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 多音轨变体布局文件
+	for _, name := range []string{
+		"master.m3u8", "out-0.m3u8", "out-a0.m3u8", "out-a1.m3u8",
+		"out-0-00000.ts", "out-a0-00000.ts", "out-a1-00001.ts",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	valid := []string{
+		"index.m3u8", "master.m3u8", "seg-00001.ts",
+		"out-0.m3u8", "out-a0.m3u8",
+		"out-0-00000.ts", "out-a1-00001.ts",
+	}
+	for _, name := range valid {
+		if _, err := sess.AssetPath(name); err != nil {
+			t.Errorf("合法资源 %q 应放行，got err=%v", name, err)
+		}
+	}
+
+	for _, bad := range []string{
+		"../master.m3u8",  // 路径穿越
+		"ffmpeg.log",      // 日志不可读
+		"seg-1.ts",        // 编号位数不对
+		"out-a0.ts",       // 变体分片必须带 5 位编号
+		"out-.m3u8",       // 变体名为空
+		"out-a0/evil.ts",  // 子目录
+		"out-a0-0001.vtt", // 错误后缀
+	} {
+		if _, err := sess.AssetPath(bad); err == nil {
+			t.Errorf("非法资源名 %q 应被拒绝", bad)
+		}
+	}
+}
+
+func TestRewriteMasterNames(t *testing.T) {
+	dir := t.TempDir()
+	master := filepath.Join(dir, hlsMasterName)
+	orig := strings.Join([]string{
+		"#EXTM3U",
+		"#EXT-X-VERSION:6",
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="group_aud",NAME="audio_1",DEFAULT=YES,URI="out-a0.m3u8"`,
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="group_aud",NAME="audio_2",DEFAULT=NO,URI="out-a1.m3u8"`,
+		`#EXT-X-STREAM-INF:BANDWIDTH=140800,AUDIO="group_aud"`,
+		"out-0.m3u8",
+		"",
+	}, "\n")
+	if err := os.WriteFile(master, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tc := &Transcoder{}
+	tracks := []AudioTrack{
+		{Label: "国语", Default: true},
+		{Label: "English"},
+	}
+	tc.rewriteOnce(master, tracks)
+
+	got, err := os.ReadFile(master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	if !strings.Contains(text, `NAME="国语"`) || !strings.Contains(text, `NAME="English"`) {
+		t.Fatalf("NAME 未被替换为友好音轨名:\n%s", text)
+	}
+	// URI 与其余属性必须保持不变
+	if !strings.Contains(text, `URI="out-a0.m3u8"`) || !strings.Contains(text, `DEFAULT=YES`) {
+		t.Fatalf("URI/属性被意外修改:\n%s", text)
+	}
+	if strings.Contains(text, "audio_1") {
+		t.Fatalf("旧名称 audio_N 应消失:\n%s", text)
+	}
+}
+
+func TestTranscoderMultiAudio(t *testing.T) {
+	if !ffmpegAvailable() || !ffprobeAvailable() {
+		t.Skip("环境无 ffmpeg/ffprobe，跳过多音轨转码测试")
+	}
+	mediaDir := t.TempDir()
+	videoPath := filepath.Join(mediaDir, "multi.mkv")
+	makeMultiAudioVideo(t, videoPath, 8)
+
+	lib := NewLibrary(mediaDir, DefaultExts)
+	if _, err := lib.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	v := lib.List()[0]
+
+	tc, err := NewTranscoder(t.TempDir(), "ffmpeg", "ffprobe", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tc.Close()
+
+	sess, err := tc.Ensure(v)
+	if err != nil {
+		t.Fatalf("Ensure 失败: %v", err)
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		st := sess.Status()
+		if st.State == "failed" {
+			t.Fatal("转码会话进入 failed 状态")
+		}
+		if st.State == "done" {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	st := sess.Status()
+	if !st.MultiAudio {
+		t.Fatalf("双音轨视频应进入多音轨布局，status=%+v", st)
+	}
+	if len(st.AudioTracks) != 2 {
+		t.Fatalf("状态应返回 2 路音轨，got %d", len(st.AudioTracks))
+	}
+
+	// 入口播放列表应指向 master
+	pl, err := sess.PlaylistPath()
+	if err != nil {
+		t.Fatalf("master 播放列表不存在: %v", err)
+	}
+	if filepath.Base(pl) != hlsMasterName {
+		t.Fatalf("多音轨入口应为 %s，got %s", hlsMasterName, pl)
+	}
+
+	// master 引用的变体与分片都应能通过白名单取到
+	for _, name := range []string{"out-0.m3u8", "out-a0.m3u8", "out-a1.m3u8",
+		"out-0-00000.ts", "out-a0-00000.ts", "out-a1-00000.ts"} {
+		if _, err := sess.AssetPath(name); err != nil {
+			t.Errorf("多音轨资源 %q 应可访问: %v", name, err)
+		}
+	}
+}
+
 func TestTranscoderUnavailable(t *testing.T) {
-	tc, err := NewTranscoder(t.TempDir(), "/nonexistent/ffmpeg-bin", 1, time.Minute)
+	tc, err := NewTranscoder(t.TempDir(), "/nonexistent/ffmpeg-bin", "/nonexistent/ffprobe-bin", 1, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ type Config struct {
 	MediaDir string // 视频媒体目录（NAS 挂载点）
 	ThumbDir string // 缩略图缓存目录
 	FFmpeg   string // ffmpeg 可执行文件路径
+	FFProbe  string // ffprobe 可执行文件路径（多音轨探测）
 	DBPath   string // SQLite 数据库路径（播放进度/收藏），留空则禁用持久化
 
 	// HLS 在线转码：把 MKV/HEVC 等浏览器不支持的格式按需转成 H.264/AAC
@@ -46,6 +47,7 @@ func Load() *Config {
 		MediaDir: getenv("MEDIA_DIR", "/media"),
 		ThumbDir: getenv("THUMB_DIR", "/data/thumbnails"),
 		FFmpeg:   getenv("FFMPEG_BIN", "ffmpeg"),
+		FFProbe:  getenv("FFPROBE_BIN", "ffprobe"),
 		DBPath:   os.Getenv("DB_PATH"),
 
 		TranscodeEnabled:     getenv("TRANSCODE_ENABLED", "true") != "false",

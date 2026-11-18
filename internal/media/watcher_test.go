@@ -135,6 +135,36 @@ func TestWatcherRename(t *testing.T) {
 	})
 }
 
+func TestWatcherSubtitleSidecar(t *testing.T) {
+	lib, _, root := newTestWatcher(t, 30*time.Millisecond)
+
+	video := filepath.Join(root, "show.mkv")
+	if err := os.WriteFile(video, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return lib.Len() == 1 })
+	vid, _ := lib.Get(makeID("show.mkv"))
+	if got := lib.Subtitles(vid.ID); len(got) != 0 {
+		t.Fatalf("初始应无字幕，got %d", len(got))
+	}
+
+	// 视频落地后新增同名字幕，应被自动挂载
+	sub := filepath.Join(root, "show.zh.srt")
+	if err := os.WriteFile(sub, []byte("1\n00:00:01,000 --> 00:00:02,000\nhi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return len(lib.Subtitles(vid.ID)) == 1 })
+	if got := lib.Subtitles(vid.ID); got[0].Lang != "zh" || !got[0].Default {
+		t.Fatalf("字幕语言/默认标记异常: %+v", got)
+	}
+
+	// 删除字幕后索引应同步清空
+	if err := os.Remove(sub); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return len(lib.Subtitles(vid.ID)) == 0 })
+}
+
 func TestWatcherLateMountedRoot(t *testing.T) {
 	// 媒体目录先不存在，启动 watcher，随后再创建（模拟 NAS 晚挂载）
 	root := filepath.Join(t.TempDir(), "media")

@@ -41,7 +41,7 @@ func main() {
 	// HLS 在线转码（可选）：ffmpeg 缺失或显式关闭时降级，不影响其他功能
 	var transcoder *media.Transcoder
 	if cfg.TranscodeEnabled {
-		tc, err := media.NewTranscoder(cfg.TranscodeDir, cfg.FFmpeg, cfg.TranscodeMax, cfg.TranscodeIdleTimeout)
+		tc, err := media.NewTranscoder(cfg.TranscodeDir, cfg.FFmpeg, cfg.FFProbe, cfg.TranscodeMax, cfg.TranscodeIdleTimeout)
 		if err != nil {
 			log.Printf("警告: 初始化转码目录失败: %v，HLS 转码不可用", err)
 		} else if !tc.Available() {

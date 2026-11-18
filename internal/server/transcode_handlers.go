@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/coder9527-lg/vedio-website/internal/media"
 )
@@ -48,7 +49,7 @@ func (s *Server) handleTranscodeStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-// handleHLSPlaylist 返回动态 m3u8 播放列表。
+// handleHLSPlaylist 返回前端入口播放列表：简单布局为 index.m3u8，多音轨为 master.m3u8。
 // 列表会随 ffmpeg 转码进度不断追加，因此禁用缓存，由播放器定时重新拉取。
 func (s *Server) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
 	sess := s.transcoder.Get(r.PathValue("id"))
@@ -68,21 +69,28 @@ func (s *Server) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// handleHLSSegment 返回单个 mpegts 分片；仍在写入或不存在时返回 404 由播放器重试。
-func (s *Server) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
+// handleHLSAsset 返回 HLS 产物中的媒体播放列表或 mpegts 分片（多音轨变体布局）。
+// 文件名经会话白名单严格校验防路径穿越；仍在写入或不存在时返回 404 由播放器重试。
+func (s *Server) handleHLSAsset(w http.ResponseWriter, r *http.Request) {
 	sess := s.transcoder.Get(r.PathValue("id"))
 	if sess == nil {
 		http.NotFound(w, r)
 		return
 	}
 	sess.Touch()
-	path, err := sess.SegmentPath(r.PathValue("seg"))
+	name := r.PathValue("asset")
+	path, err := sess.AssetPath(name)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "video/mp2t")
-	// 分片一旦写完内容不变，可长期缓存
-	w.Header().Set("Cache-Control", "private, max-age=31536000")
+	if strings.HasSuffix(name, ".m3u8") {
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Cache-Control", "no-store") // 媒体列表同样随转码进度追加
+	} else {
+		w.Header().Set("Content-Type", "video/mp2t")
+		// 分片一旦写完内容不变，可长期缓存
+		w.Header().Set("Cache-Control", "private, max-age=31536000")
+	}
 	http.ServeFile(w, r, path)
 }

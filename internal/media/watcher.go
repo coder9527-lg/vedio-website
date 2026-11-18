@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -184,13 +185,13 @@ func (w *Watcher) handleEvent(ev fsnotify.Event) {
 	w.pending[path] = w.pending[path] || maybeRemoved
 }
 
-// enqueueDir 把目录下现存的视频文件全部放入待处理集合。
+// enqueueDir 把目录下现存的视频与字幕文件全部放入待处理集合。
 func (w *Watcher) enqueueDir(dir string) {
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		if w.library.IsVideoExt(path) {
+		if w.library.IsVideoExt(path) || IsSubtitleExt(path) {
 			w.pending[path] = false
 		}
 		return nil
@@ -210,11 +211,19 @@ func (w *Watcher) flush() {
 		if _, err := os.Stat(path); err != nil {
 			// 路径已不存在：可能是文件删除，也可能是整个目录被删
 			removed += w.library.Remove(path)
+			if IsSubtitleExt(path) {
+				w.refreshSiblingSubtitles(path)
+			}
 			continue
 		}
 		if maybeRemoved {
 			// 重命名场景：旧路径已不存在（上面已删），新路径会以 Create 事件到达
 			removed += w.library.Remove(path)
+		}
+		if IsSubtitleExt(path) {
+			// 字幕文件增删：刷新同目录同名视频的字幕索引
+			w.refreshSiblingSubtitles(path)
+			continue
 		}
 		if _, ok := w.library.Upsert(path); ok {
 			added++
@@ -223,6 +232,20 @@ func (w *Watcher) flush() {
 	if added > 0 || removed > 0 {
 		log.Printf("文件监听增量更新完成: 新增/更新 %d 个，移除 %d 个，当前共 %d 个",
 			added, removed, w.library.Len())
+	}
+}
+
+// refreshSiblingSubtitles 在字幕文件变更后，刷新同目录下同名视频的字幕列表。
+// 视频名可能含点号（Show.2024.mkv），因此不靠截断文件名，而是遍历库中同目录视频，
+// 复用与扫描一致的 subtitleStemMatch 规则匹配。
+func (w *Watcher) refreshSiblingSubtitles(subPath string) {
+	dir := filepath.Dir(subPath)
+	stem := strings.TrimSuffix(filepath.Base(subPath), filepath.Ext(subPath))
+	for _, v := range w.library.List() {
+		if filepath.Dir(v.AbsPath()) != dir || !subtitleStemMatch(stem, v.Name) {
+			continue
+		}
+		w.library.RefreshSubtitles(v.ID)
 	}
 }
 

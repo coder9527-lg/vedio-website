@@ -91,6 +91,10 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := s.loadVideoState()
+	subtitles := s.library.Subtitles(v.ID)
+	if subtitles == nil {
+		subtitles = []*media.Subtitle{}
+	}
 	s.render(w, "watch.html", struct {
 		basePage
 		Video          *media.Video
@@ -98,6 +102,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		StoreOn        bool
 		TranscodeOn    bool
 		NativePlayable bool
+		Subtitles      []*media.Subtitle
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
@@ -105,6 +110,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		StoreOn:        s.storeEnabled(),
 		TranscodeOn:    s.transcodeEnabled(),
 		NativePlayable: isNativePlayable(v.Ext),
+		Subtitles:      subtitles,
 	})
 }
 

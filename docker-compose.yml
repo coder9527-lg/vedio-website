@@ -14,10 +14,12 @@ services:
       PORT: "8080"
       # SQLite 数据库（播放进度/收藏），位于持久化卷内；留空则关闭该功能
       DB_PATH: "/data/vedio.db"
-      # HLS 在线转码（MKV/HEVC 等浏览器不支持的格式按需转 H.264/AAC）
+      # HLS 在线转码（MKV/HEVC 等浏览器不支持的格式按需转 H.264/AAC，多音轨自动出可选音轨）
       TRANSCODE_ENABLED: "true"
       TRANSCODE_MAX: "2"          # 同时转码任务上限，按 NAS CPU 性能调整
       TRANSCODE_IDLE_TIMEOUT: "30m" # 无人观看后多久停止转码进程（分片保留）
+      # FFMPEG_BIN: "ffmpeg"      # 自定义 ffmpeg 路径
+      # FFPROBE_BIN: "ffprobe"    # 自定义 ffprobe 路径（多音轨探测，随 ffmpeg 镜像自带）
       # 访问密码：取消注释并设置即开启登录认证
       # AUTH_PASSWORD: "change-me"
       # AUTH_SECRET: "please-change-to-a-long-random-string"

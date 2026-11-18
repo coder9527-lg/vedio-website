@@ -286,6 +286,53 @@ button:disabled { opacity: .6; cursor: wait; }
   font-size: 13px;
 }
 
+/* 播放页：字幕 / 音轨选择菜单 */
+.player-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.track-menu { position: relative; }
+.track-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.track-btn:hover { border-color: var(--accent); color: var(--accent); }
+.track-btn .caret { font-size: 11px; }
+.track-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 160px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  z-index: 20;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+.track-dropdown.open { display: grid; gap: 2px; }
+.track-item {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.track-item:hover { background: rgba(56, 189, 248, .12); }
+.track-item.current { color: var(--accent); background: rgba(56, 189, 248, .15); }
+
 /* 移动端适配 */
 @media (max-width: 640px) {
   .site-header { padding: 12px 16px; }

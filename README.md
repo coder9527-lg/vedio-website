@@ -9,6 +9,8 @@
 - ⏯️ **在线播放 + 进度条拖拽**：基于 HTTP Range 的流式传输，浏览器原生播放器
 - 🖼️ **ffmpeg 缩略图**：首次访问按需抽帧并缓存，不阻塞扫描；无 ffmpeg 时自动降级占位图
 - 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖
+- 🔊 **多音轨支持**：ffprobe 自动探测视频中的多路音轨（语言/标题），转码时产出带 `EXT-X-MEDIA` 音频分组的 master 播放列表，播放页可在音轨菜单中切换；单音轨视频保持简单布局不变
+- 💬 **外挂字幕自动挂载**：同目录同名（可带语言后缀，如 `Movie.zh-CN.srt`、`Movie.en.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端统一转 WebVTT，通过 `<track>` 在原画与转码两种模式下均可切换
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
 - 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
@@ -70,6 +72,7 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `MEDIA_DIR` | `/media` | 视频媒体目录 |
 | `THUMB_DIR` | `/data/thumbnails` | 缩略图缓存目录 |
 | `FFMPEG_BIN` | `ffmpeg` | ffmpeg 可执行文件路径 |
+| `FFPROBE_BIN` | `ffprobe` | ffprobe 可执行文件路径（多音轨探测，随 ffmpeg 一起安装） |
 | `TRANSCODE_ENABLED` | `true` | 是否启用 HLS 在线转码，设为 `false` 或 ffmpeg 缺失时自动隐藏入口 |
 | `TRANSCODE_DIR` | `/data/transcode` | HLS 分片（m3u8/ts）缓存目录，位于持久化卷内；启动时清空残留 |
 | `TRANSCODE_MAX` | `2` | 同时运行的 ffmpeg 转码任务上限，超出的任务排队，按 NAS CPU 性能调整 |
@@ -97,8 +100,10 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | GET | `/stream/{id}` | 视频流（支持 Range；加 `?download=1` 触发下载） |
 | GET | `/thumb/{id}` | 缩略图（自动生成并缓存） |
 | GET | `/api/v1/videos/{id}/transcode` | 启动/查询 HLS 转码会话状态（排队返回 429，前端轮询） |
-| GET | `/hls/{id}/index.m3u8` | HLS 播放列表（转码中实时追加，`no-store`） |
-| GET | `/hls/{id}/{seg}` | HLS mpegts 分片（文件名白名单校验，防路径穿越） |
+| GET | `/hls/{id}/index.m3u8` | HLS 入口播放列表（单音轨返回 index，多音轨返回 master 内容，`no-store`） |
+| GET | `/hls/{id}/{asset...}` | HLS 媒体播放列表与 mpegts 分片（变体 `out-*`，文件名白名单校验，防路径穿越） |
+| GET | `/api/v1/videos/{id}/subtitles` | 视频关联的外挂字幕列表 |
+| GET | `/subtitles/{id}/{sid}/track.vtt` | 单条字幕，统一转 WebVTT（SRT/ASS/SSA 服务端转换） |
 | GET / PUT / DELETE | `/api/v1/videos/{id}/progress` | 查询 / 上报 / 清除播放进度（需 `DB_PATH`） |
 | GET | `/api/v1/progress` | 全部播放进度（需 `DB_PATH`） |
 | GET / POST | `/api/v1/videos/{id}/favorite` | 查询收藏状态 / 收藏·取消·切换（POST 空体即 toggle，需 `DB_PATH`） |
@@ -148,7 +153,26 @@ environment:
 - **并发与排队**：`TRANSCODE_MAX` 限制同时运行的转码进程数，槽位满时新任务入队，API 立即返回 `429`，前端显示「排队中」并继续轮询，不会重复入队；
 - **空闲回收与重转**：播放列表/分片/状态请求都会刷新会话的最近访问时间，超过 `TRANSCODE_IDLE_TIMEOUT` 无人观看即停止 ffmpeg 释放 CPU，已产出分片保留；再次观看时清空旧目录全量重转，分片从 0 重新编号，避免新旧列表混用；
 - **安全与缓存**：分片名严格白名单（`seg-<5 位数字>.ts`），杜绝路径穿越与日志读取；m3u8 禁缓存（动态内容），分片长缓存（内容不变）；
-- **降级策略**：未安装 ffmpeg 或 `TRANSCODE_ENABLED=false` 时播放页自动隐藏转码入口，原画直链、下载等其他功能不受影响；转码失败可随时切回原画或下载原文件。
+- **多音轨切换**：转码前用 ffprobe 列出全部音频流（语言标签、容器标题、default 标记）。单路音频沿用 `index.m3u8 + seg-*.ts` 简单布局；两路及以上产出 `master.m3u8` + 视频变体 `out-0.*` 与每路音频变体 `out-aN.*`（视频流只编码一份以省 CPU），master 中的 `NAME` 由服务端重写为友好音轨名（ffmpeg 6.x 默认写 `audio_N`）。前端 hls.js 走 `audioTrack` 切换，Safari 原生 HLS 走 `audioTracks`
+- **降级策略**：未安装 ffmpeg 或 `TRANSCODE_ENABLED=false` 时播放页自动隐藏转码入口，原画直链、下载等其他功能不受影响；ffprobe 缺失或探测失败时自动退回单音轨转码；转码失败可随时切回原画或下载原文件。
+
+## 外挂字幕
+
+把字幕文件与视频放在同一目录并保持同名（可带语言/`default` 后缀），扫描与文件监听会自动关联，无需手动导入：
+
+```
+Movies/Movie.mkv
+Movies/Movie.srt            # 无名后缀，展示为「字幕」
+Movies/Movie.zh-CN.ass      # 简体中文（默认开启）
+Movies/Movie.en.srt         # English
+Movies/Movie.default.vtt    # default 后缀同样视为默认字幕
+```
+
+- 支持 `.srt` / `.vtt` / `.ass` / `.ssa` 文本字幕；服务端把 SRT 时间戳（逗号→点号、去序号）与 ASS/SSA 的 `Dialogue` 行（剥离样式覆盖块、`\N` 换行）统一转成浏览器可靠支持的 **WebVTT**，原生 `.vtt` 直接透传；
+- 语言标签覆盖中英日韩法德西俄意葡泰越阿印等常见代码（含 `zh-CN/zh-Hant/chs/cht` 等别名），未识别的后缀原样展示、不丢弃；
+- 字幕经标准 `<track>` 挂载，**原画直链与 HLS 转码两种播放模式通用**，播放页「字幕」菜单可开关；中文/`default` 字幕默认开启；
+- 文件监听覆盖字幕增删：拷贝进来或删除字幕文件后（防抖窗口结束）自动刷新关联，无需重扫；
+- 位图字幕（PGS/DVD-VOBSUB 等）无法转 WebVTT，内嵌字幕轨在转码时仍按 `-sn` 丢弃（见路线图）。
 
 > 转码是 CPU 密集型任务，低配 NAS 建议把 `TRANSCODE_MAX` 设为 `1`，并优先在局域网内使用。
 
@@ -164,5 +188,7 @@ environment:
 - [x] SQLite 持久化：播放进度（自动上报 + 断点续播）、收藏、搜索/排序/视图（见 `DB_PATH`）
 - [x] 文件监听（fsnotify）自动增量扫描（含防抖、晚挂载重试、定时全量兜底）
 - [x] ffmpeg HLS 在线转码（按需转 H.264/AAC、并发排队、空闲回收，见 `TRANSCODE_*`）
-- [ ] 字幕自动挂载与多音轨支持（当前转码取第一路音视频并丢弃字幕轨）
+- [x] 外挂字幕自动挂载（SRT/VTT/ASS/SSA → WebVTT，原画/转码通用，见「外挂字幕」）
+- [x] 多音轨支持（ffprobe 探测 + HLS 音频分组，播放页切换）
+- [ ] 内嵌字幕轨转 HLS WebVTT（当前转码 `-sn` 丢弃内嵌轨，位图字幕受 ffmpeg mpegts 限制）
 - [ ] 海报/元信息刮削（NFO、TMDB）

@@ -105,10 +105,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)
 
-	// HLS 在线转码（可选）：状态轮询、m3u8 播放列表、mpegts 分片
+	// HLS 在线转码（可选）：状态轮询、m3u8 播放列表（单音轨 index / 多音轨 master）、分片与变体
 	mux.HandleFunc("GET /api/v1/videos/{id}/transcode", s.handleTranscodeStatus)
 	mux.HandleFunc("GET /hls/{id}/index.m3u8", s.handleHLSPlaylist)
-	mux.HandleFunc("GET /hls/{id}/{seg}", s.handleHLSSegment)
+	mux.HandleFunc("GET /hls/{id}/{asset...}", s.handleHLSAsset)
+
+	// 外挂字幕：列表与 WebVTT 轨道（原画/HLS 两种模式通用）
+	mux.HandleFunc("GET /api/v1/videos/{id}/subtitles", s.handleSubtitleList)
+	mux.HandleFunc("GET /subtitles/{id}/{sid}/track.vtt", s.handleSubtitleTrack)
 
 	// 认证相关路由（未开启密码时 /login 直接回首页）
 	mux.HandleFunc("GET /login", s.handleLoginPage)

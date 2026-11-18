@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,7 +45,9 @@ func (a *atomicTime) store(t time.Time) { a.v.Store(t) }
 
 const (
 	hlsPlaylistName = "index.m3u8"
-	hlsSegmentTime  = 4 // 单个 HLS 分片时长（秒）
+	hlsMasterName   = "master.m3u8" // 多音轨主播放列表（前端入口）
+	hlsSegmentTime  = 4             // 单个 HLS 分片时长（秒）
+	hlsAudioGroup   = "aud"         // 多音轨变体在 master 中的分组 ID
 )
 
 // 转码相关的哨兵错误。
@@ -68,6 +72,7 @@ const (
 type Transcoder struct {
 	dir           string // 转码产物根目录（每个视频一个子目录）
 	ffmpeg        string
+	ffprobe       string
 	maxConcurrent int
 	idleTimeout   time.Duration
 
@@ -81,7 +86,7 @@ type Transcoder struct {
 }
 
 // NewTranscoder 创建转码器并清空旧的转码产物（残留的临时目录不可信）。
-func NewTranscoder(dir, ffmpeg string, maxConcurrent int, idleTimeout time.Duration) (*Transcoder, error) {
+func NewTranscoder(dir, ffmpeg, ffprobe string, maxConcurrent int, idleTimeout time.Duration) (*Transcoder, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -95,6 +100,7 @@ func NewTranscoder(dir, ffmpeg string, maxConcurrent int, idleTimeout time.Durat
 	t := &Transcoder{
 		dir:           dir,
 		ffmpeg:        ffmpeg,
+		ffprobe:       ffprobe,
 		maxConcurrent: maxConcurrent,
 		idleTimeout:   idleTimeout,
 		ctx:           ctx,
@@ -117,9 +123,11 @@ func (t *Transcoder) Available() bool {
 
 // sessionStatus 描述会话当前状态，供 API 轮询。
 type sessionStatus struct {
-	State       string `json:"state"` // idle | starting | running | done | failed
-	HasPlaylist bool   `json:"hasPlaylist"`
-	Segments    int    `json:"segments"`
+	State       string       `json:"state"` // idle | starting | running | done | failed
+	HasPlaylist bool         `json:"hasPlaylist"`
+	Segments    int          `json:"segments"`
+	MultiAudio  bool         `json:"multiAudio"` // 是否产出 master.m3u8 多音轨布局
+	AudioTracks []AudioTrack `json:"audioTracks,omitempty"`
 }
 
 // Ensure 返回（必要时启动）视频对应的转码会话。
@@ -203,31 +211,18 @@ func (t *Transcoder) run(sess *session) {
 		return
 	}
 
+	// 探测音轨：失败不致命，降级为「第一路音轨」的简单布局
+	tracks, probeErr := ProbeAudio(t.ffprobe, sess.video.AbsPath())
+	if probeErr != nil {
+		log.Printf("ffprobe 探测音轨失败 %s，按单音轨转码: %v", sess.video.RelPath, probeErr)
+	}
+	sess.setAudioTracks(tracks)
+
 	ctx, cancel := context.WithCancel(t.ctx)
 	sess.setCancel(cancel)
 	defer cancel()
 
-	args := []string{
-		"-y",
-		"-i", sess.video.AbsPath(),
-		"-map", "0:v:0", "-map", "0:a:0?", // 取第一路视频；无音频轨也不报错
-		"-c:v", "libx264",
-		"-preset", "veryfast",
-		"-crf", "23",
-		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // H.264 要求偶数像素
-		"-c:a", "aac", "-b:a", "128k",
-		"-ac", "2",
-		"-sn", // 丢弃字幕轨（字幕挂载是后续路线图项）
-		"-f", "hls",
-		"-hls_time", fmt.Sprintf("%d", hlsSegmentTime),
-		// 不设 hls_playlist_type=vod：vod 语义下 ffmpeg 到转码结束才写 m3u8，
-		// 无法边转边播。默认 event 语义下列表实时追加，完成时自动补 ENDLIST。
-		// 不使用 temp_file：该标志会让 m3u8 也走临时文件、进程结束才改名。
-		"-hls_flags", "append_list+independent_segments",
-		"-hls_list_size", "0", // 保留全部分片，支持回看与断点续播
-		"-hls_segment_filename", filepath.Join(sess.dir, "seg-%05d.ts"),
-		filepath.Join(sess.dir, hlsPlaylistName),
-	}
+	args := t.buildArgs(sess, tracks)
 
 	cmd := exec.CommandContext(ctx, t.ffmpeg, args...)
 	// ffmpeg 进度/错误全在 stderr，落盘日志便于排障并防止管道阻塞
@@ -244,6 +239,14 @@ func (t *Transcoder) run(sess *session) {
 	}
 	sess.startOnce.Do(func() { close(sess.started) })
 
+	// 多音轨：ffmpeg 6.x 不会把 var_stream_map 的 name 写入 master 的 EXT-X-MEDIA NAME
+	//（始终是 audio_N），后台轮询重写为友好音轨名（国语/English/音轨 2）。
+	if len(tracks) > 1 {
+		stopRewrite := make(chan struct{})
+		go t.rewriteMasterNames(sess, tracks, stopRewrite)
+		defer close(stopRewrite)
+	}
+
 	err = cmd.Wait()
 	if ctx.Err() != nil {
 		// 被 idle 回收或服务关闭主动停止：回到 idle，保留已产出分片，下次请求可重转
@@ -255,6 +258,108 @@ func (t *Transcoder) run(sess *session) {
 		return
 	}
 	sess.setState(stateDone)
+}
+
+// buildArgs 根据探测到的音轨数生成 ffmpeg 参数。
+//   - 0~1 路音频：简单布局，单个 index.m3u8 + seg-xxxxx.ts（保持旧行为与测试不变）；
+//   - 2 路及以上：变体布局，master.m3u8 为入口，视频与每路音频各自一个媒体播放列表，
+//     前端通过 EXT-X-MEDIA 音频分组切换音轨，视频流只编码一份以节省 CPU。
+func (t *Transcoder) buildArgs(sess *session, tracks []AudioTrack) []string {
+	// 编解码与 HLS 公共选项（不含输入与 -map，二者随音轨数变化）。
+	opts := []string{
+		"-c:v", "libx264",
+		"-preset", "veryfast",
+		"-crf", "23",
+		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // H.264 要求偶数像素
+		"-c:a", "aac", "-b:a", "128k",
+		"-ac", "2",
+		"-sn", // 丢弃内嵌字幕轨：外挂字幕通过 <track> 提供，位图字幕无法转 WebVTT
+		"-f", "hls",
+		"-hls_time", fmt.Sprintf("%d", hlsSegmentTime),
+		// 不设 hls_playlist_type=vod：vod 语义下 ffmpeg 到转码结束才写 m3u8，
+		// 无法边转边播。默认 event 语义下列表实时追加，完成时自动补 ENDLIST。
+		"-hls_flags", "append_list+independent_segments",
+		"-hls_list_size", "0", // 保留全部分片，支持回看与断点续播
+	}
+
+	args := []string{"-y", "-i", sess.video.AbsPath()}
+
+	if len(tracks) <= 1 {
+		// 简单布局：单个 index.m3u8 + seg-xxxxx.ts，取第一路视频/音频
+		args = append(args, "-map", "0:v:0", "-map", "0:a:0?") // 无音频轨也不报错
+		args = append(args, opts...)
+		args = append(args,
+			"-hls_segment_filename", filepath.Join(sess.dir, "seg-%05d.ts"),
+			filepath.Join(sess.dir, hlsPlaylistName),
+		)
+		return args
+	}
+
+	// 多音轨：视频变体 + 每路音频一个独立变体，master 引用同一视频流。
+	// -map 必须在输出参数之前，ffmpeg 按输出流序号（v:0/a:0/a:1）映射，
+	// 缺少 -map 会导致 var_stream_map 中的 a:N 找不到输出流。
+	args = append(args, "-map", "0:v:0")
+	for _, tr := range tracks {
+		args = append(args, "-map", fmt.Sprintf("0:%d?", tr.Index)) // 单路损坏不拖垮整体
+	}
+	args = append(args, opts...)
+
+	var streamMap []string
+	streamMap = append(streamMap, "v:0,agroup:"+hlsAudioGroup)
+	for i, tr := range tracks {
+		entry := fmt.Sprintf("a:%d,agroup:%s,name:a%d", i, hlsAudioGroup, i)
+		if tr.Default {
+			entry += ",default:yes"
+		}
+		streamMap = append(streamMap, entry)
+	}
+	args = append(args,
+		"-master_pl_name", hlsMasterName,
+		"-var_stream_map", strings.Join(streamMap, " "),
+		"-hls_segment_filename", filepath.Join(sess.dir, "out-%v-%05d.ts"),
+		filepath.Join(sess.dir, "out-%v.m3u8"),
+	)
+	return args
+}
+
+// masterAudioLineRE 匹配 master 播放列表中的 EXT-X-MEDIA 音频行，替换 NAME 属性。
+var masterAudioLineRE = regexp.MustCompile(`(EXT-X-MEDIA:TYPE=AUDIO,.*?)NAME="[^"]*"`)
+
+// rewriteMasterNames 轮询重写 master.m3u8，把 audio_N 名称替换为探测到的友好音轨名。
+// ffmpeg 以 event 语义持续覆写该文件，因此不能只改一次；进程结束（stop 通道关闭）后退出。
+func (t *Transcoder) rewriteMasterNames(sess *session, tracks []AudioTrack, stop <-chan struct{}) {
+	master := filepath.Join(sess.dir, hlsMasterName)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			t.rewriteOnce(master, tracks)
+			return
+		case <-ticker.C:
+			t.rewriteOnce(master, tracks)
+		}
+	}
+}
+
+// rewriteOnce 执行单次 master 重写；文件尚未生成时静默跳过。
+func (t *Transcoder) rewriteOnce(master string, tracks []AudioTrack) {
+	raw, err := os.ReadFile(master)
+	if err != nil {
+		return
+	}
+	i := 0
+	rewritten := masterAudioLineRE.ReplaceAllStringFunc(string(raw), func(line string) string {
+		label := "音轨 " + strconv.Itoa(i+1)
+		if i < len(tracks) && tracks[i].Label != "" {
+			label = tracks[i].Label
+		}
+		i++
+		return masterAudioLineRE.ReplaceAllString(line, `${1}NAME="`+label+`"`)
+	})
+	if rewritten != string(raw) {
+		_ = os.WriteFile(master, []byte(rewritten), 0o644)
+	}
 }
 
 // Get 按视频 ID 查找会话（不存在返回 nil）。
@@ -312,9 +417,10 @@ type session struct {
 	started   chan struct{} // ffmpeg 进程尝试启动后关闭（成功或失败）
 	startOnce sync.Once
 
-	mu     sync.Mutex
-	state  sessState
-	cancel context.CancelFunc
+	mu          sync.Mutex
+	state       sessState
+	cancel      context.CancelFunc
+	audioTracks []AudioTrack // ffprobe 探测到的音轨（单音轨时也填充）
 
 	lastAccessV atomicTime // 最近一次被播放器/API 访问的时间
 }
@@ -377,7 +483,13 @@ func (s *session) setCancel(c context.CancelFunc) {
 func (s *session) Status() sessionStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := sessionStatus{State: s.state.String(), HasPlaylist: s.hasPlaylistLocked()}
+	multi := s.hasMasterLocked()
+	st := sessionStatus{
+		State:       s.state.String(),
+		HasPlaylist: s.hasPlaylistLocked() || multi,
+		MultiAudio:  multi,
+		AudioTracks: append([]AudioTrack(nil), s.audioTracks...),
+	}
 	if ents, err := os.ReadDir(s.dir); err == nil {
 		for _, e := range ents {
 			if strings.HasSuffix(e.Name(), ".ts") {
@@ -403,27 +515,57 @@ func (st sessState) String() string {
 	}
 }
 
-// PlaylistPath 返回 m3u8 文件路径；文件尚不存在时返回错误（播放器稍后重试）。
+// PlaylistPath 返回前端应拉取的播放列表路径：
+// 多音轨布局返回 master.m3u8，简单布局返回 index.m3u8；文件尚不存在时返回错误。
 func (s *session) PlaylistPath() (string, error) {
-	p := filepath.Join(s.dir, hlsPlaylistName)
+	s.mu.Lock()
+	multi := s.hasMasterLocked()
+	s.mu.Unlock()
+	name := hlsPlaylistName
+	if multi {
+		name = hlsMasterName
+	}
+	p := filepath.Join(s.dir, name)
 	if _, err := os.Stat(p); err != nil {
 		return "", err
 	}
 	return p, nil
 }
 
-// SegmentPath 校验分片名并返回路径。
-// 只允许 seg-<5 位数字>.ts 形式，杜绝路径穿越；文件不存在时返回错误。
+// hlsAssetName 白名单：
+//   - 简单布局：index.m3u8、seg-<5 位数字>.ts
+//   - 多音轨布局：master.m3u8、out-<变体>-<5 位数字>.ts、out-<变体>.m3u8
+//
+// 严格校验杜绝路径穿越与日志读取。
+var (
+	simpleSegRE  = regexp.MustCompile(`^seg-\d{5}\.ts$`)
+	variantRE    = regexp.MustCompile(`^out-[0-9A-Za-z_-]+$`)
+	variantSegRE = regexp.MustCompile(`^out-[0-9A-Za-z_-]+-\d{5}\.ts$`)
+)
+
+// AssetPath 校验 HLS 资源名并返回磁盘路径，非法或不存在时返回错误。
+func (s *session) AssetPath(name string) (string, error) {
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\`) {
+		return "", os.ErrNotExist
+	}
+	switch {
+	case name == hlsPlaylistName || name == hlsMasterName:
+	case simpleSegRE.MatchString(name):
+	case strings.HasSuffix(name, ".m3u8") && variantRE.MatchString(strings.TrimSuffix(name, ".m3u8")):
+	case variantSegRE.MatchString(name):
+	default:
+		return "", os.ErrNotExist
+	}
+	p := filepath.Join(s.dir, name)
+	if _, err := os.Stat(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// SegmentPath 兼容旧调用：简单布局的分片名校验。
 func (s *session) SegmentPath(name string) (string, error) {
-	if name != filepath.Base(name) || !strings.HasPrefix(name, "seg-") ||
-		!strings.HasSuffix(name, ".ts") {
-		return "", os.ErrNotExist
-	}
-	num := strings.TrimSuffix(strings.TrimPrefix(name, "seg-"), ".ts")
-	if len(num) != 5 {
-		return "", os.ErrNotExist
-	}
-	if _, err := strconv.Atoi(num); err != nil {
+	if !simpleSegRE.MatchString(name) {
 		return "", os.ErrNotExist
 	}
 	p := filepath.Join(s.dir, name)
@@ -436,6 +578,18 @@ func (s *session) SegmentPath(name string) (string, error) {
 func (s *session) hasPlaylistLocked() bool {
 	_, err := os.Stat(filepath.Join(s.dir, hlsPlaylistName))
 	return err == nil
+}
+
+func (s *session) hasMasterLocked() bool {
+	_, err := os.Stat(filepath.Join(s.dir, hlsMasterName))
+	return err == nil
+}
+
+// setAudioTracks 记录 ffprobe 探测结果，供状态 API 返回音轨信息。
+func (s *session) setAudioTracks(tracks []AudioTrack) {
+	s.mu.Lock()
+	s.audioTracks = append([]AudioTrack(nil), tracks...)
+	s.mu.Unlock()
 }
 
 // stop 主动终止 ffmpeg 进程（保留磁盘分片）。

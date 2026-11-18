@@ -40,6 +40,7 @@ type Library struct {
 
 	mu     sync.RWMutex
 	videos map[string]*Video
+	subs   map[string][]*Subtitle // 视频 ID → 外挂字幕列表
 }
 
 func NewLibrary(root string, exts map[string]bool) *Library {
@@ -47,6 +48,7 @@ func NewLibrary(root string, exts map[string]bool) *Library {
 		root:   root,
 		exts:   exts,
 		videos: map[string]*Video{},
+		subs:   map[string][]*Subtitle{},
 	}
 }
 
@@ -87,8 +89,17 @@ func (l *Library) Scan() (int, error) {
 		return nil
 	})
 
+	// 全量重建字幕索引：按视频逐个发现同目录外挂字幕
+	subs := make(map[string][]*Subtitle, len(found))
+	for id, v := range found {
+		if s := findSubtitles(l.root, v); len(s) > 0 {
+			subs[id] = s
+		}
+	}
+
 	l.mu.Lock()
 	l.videos = found
+	l.subs = subs
 	l.mu.Unlock()
 	return len(found), err
 }
@@ -167,6 +178,50 @@ func (l *Library) IsVideoExt(name string) bool {
 	return l.exts[strings.ToLower(filepath.Ext(name))]
 }
 
+// Subtitles 返回某个视频的外挂字幕列表（无字幕时返回 nil）。
+func (l *Library) Subtitles(videoID string) []*Subtitle {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	out := l.subs[videoID]
+	// 返回拷贝，避免调用方修改内部切片
+	if len(out) == 0 {
+		return nil
+	}
+	cp := make([]*Subtitle, len(out))
+	copy(cp, out)
+	return cp
+}
+
+// GetSubtitle 按视频 ID 与字幕 ID 查找字幕。
+func (l *Library) GetSubtitle(videoID, subID string) (*Subtitle, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	for _, s := range l.subs[videoID] {
+		if s.ID == subID {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
+// RefreshSubtitles 重新发现单个视频的外挂字幕（字幕文件独立增删时由 Watcher 调用）。
+func (l *Library) RefreshSubtitles(videoID string) {
+	l.mu.RLock()
+	v, ok := l.videos[videoID]
+	l.mu.RUnlock()
+	if !ok {
+		return
+	}
+	subtitles := findSubtitles(l.root, v)
+	l.mu.Lock()
+	if len(subtitles) > 0 {
+		l.subs[videoID] = subtitles
+	} else {
+		delete(l.subs, videoID)
+	}
+	l.mu.Unlock()
+}
+
 // Upsert 增量加入或更新单个文件；非视频扩展名、文件不存在或读取失败时忽略。
 func (l *Library) Upsert(path string) (*Video, bool) {
 	if !l.IsVideoExt(path) {
@@ -189,8 +244,16 @@ func (l *Library) Upsert(path string) (*Video, bool) {
 		Ext:     strings.ToLower(filepath.Ext(path)),
 		absPath: path,
 	}
+	// 刷新该视频的外挂字幕（字幕文件可能与视频先后落地，事件防抖后统一重扫）
+	subtitles := findSubtitles(l.root, v)
+
 	l.mu.Lock()
 	l.videos[v.ID] = v
+	if len(subtitles) > 0 {
+		l.subs[v.ID] = subtitles
+	} else {
+		delete(l.subs, v.ID)
+	}
 	l.mu.Unlock()
 	return v, true
 }
@@ -210,6 +273,7 @@ func (l *Library) Remove(path string) int {
 	for id, v := range l.videos {
 		if v.RelPath == rel || strings.HasPrefix(v.RelPath, rel+"/") {
 			delete(l.videos, id)
+			delete(l.subs, id)
 			removed++
 		}
 	}
