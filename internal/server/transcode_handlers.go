@@ -52,6 +52,10 @@ func (s *Server) handleTranscodeStatus(w http.ResponseWriter, r *http.Request) {
 // handleHLSPlaylist 返回前端入口播放列表：简单布局为 index.m3u8，多音轨为 master.m3u8。
 // 列表会随 ffmpeg 转码进度不断追加，因此禁用缓存，由播放器定时重新拉取。
 func (s *Server) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
+	if s.transcoder == nil {
+		http.NotFound(w, r)
+		return
+	}
 	sess := s.transcoder.Get(r.PathValue("id"))
 	if sess == nil {
 		http.NotFound(w, r)
@@ -72,6 +76,10 @@ func (s *Server) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
 // handleHLSAsset 返回 HLS 产物中的媒体播放列表或 mpegts 分片（多音轨变体布局）。
 // 文件名经会话白名单严格校验防路径穿越；仍在写入或不存在时返回 404 由播放器重试。
 func (s *Server) handleHLSAsset(w http.ResponseWriter, r *http.Request) {
+	if s.transcoder == nil {
+		http.NotFound(w, r)
+		return
+	}
 	sess := s.transcoder.Get(r.PathValue("id"))
 	if sess == nil {
 		http.NotFound(w, r)
