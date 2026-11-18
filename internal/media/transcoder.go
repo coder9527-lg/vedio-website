@@ -48,7 +48,13 @@ const (
 	hlsMasterName   = "master.m3u8" // 多音轨主播放列表（前端入口）
 	hlsSegmentTime  = 4             // 单个 HLS 分片时长（秒）
 	hlsAudioGroup   = "aud"         // 多音轨变体在 master 中的分组 ID
+
+	// 内嵌字幕提取产物的统一前缀：sub-<序号>.vtt，受 AssetPath 白名单保护。
+	hlsSubPrefix = "sub-"
 )
+
+// subtitleExtractTimeout 限制单条内嵌字幕的提取时长，避免异常文件拖住转码启动。
+const subtitleExtractTimeout = 60 * time.Second
 
 // 转码相关的哨兵错误。
 var (
@@ -123,11 +129,12 @@ func (t *Transcoder) Available() bool {
 
 // sessionStatus 描述会话当前状态，供 API 轮询。
 type sessionStatus struct {
-	State       string       `json:"state"` // idle | starting | running | done | failed
-	HasPlaylist bool         `json:"hasPlaylist"`
-	Segments    int          `json:"segments"`
-	MultiAudio  bool         `json:"multiAudio"` // 是否产出 master.m3u8 多音轨布局
-	AudioTracks []AudioTrack `json:"audioTracks,omitempty"`
+	State        string          `json:"state"` // idle | starting | running | done | failed
+	HasPlaylist  bool            `json:"hasPlaylist"`
+	Segments     int             `json:"segments"`
+	MultiAudio   bool            `json:"multiAudio"` // 是否产出 master.m3u8 多音轨布局
+	AudioTracks  []AudioTrack    `json:"audioTracks,omitempty"`
+	EmbeddedSubs []SubtitleTrack `json:"embeddedSubtitles,omitempty"` // 内嵌字幕轨（含位图轨）
 }
 
 // Ensure 返回（必要时启动）视频对应的转码会话。
@@ -217,6 +224,17 @@ func (t *Transcoder) run(sess *session) {
 		log.Printf("ffprobe 探测音轨失败 %s，按单音轨转码: %v", sess.video.RelPath, probeErr)
 	}
 	sess.setAudioTracks(tracks)
+
+	// 探测内嵌字幕：文本轨在主转码前同步提取为 WebVTT sidecar（sub-N.vtt），
+	// 位图轨（PGS/DVD 等）仅记录、不提取。失败不阻断主转码。
+	subTracks, subErr := ProbeSubtitles(t.ffprobe, sess.video.AbsPath())
+	if subErr != nil {
+		log.Printf("ffprobe 探测字幕失败 %s，跳过内嵌字幕: %v", sess.video.RelPath, subErr)
+	}
+	sess.setSubtitleTracks(subTracks)
+	if len(subTracks) > 0 {
+		t.extractSubtitles(sess, subTracks)
+	}
 
 	ctx, cancel := context.WithCancel(t.ctx)
 	sess.setCancel(cancel)
@@ -362,6 +380,47 @@ func (t *Transcoder) rewriteOnce(master string, tracks []AudioTrack) {
 	}
 }
 
+// extractSubtitles 把可提取的文本内嵌字幕逐路导出为转码目录下的 sub-<序号>.vtt。
+// 序号与 ProbeSubtitles 返回的列表下标一致；位图轨与提取失败的轨不会产出文件，
+// 处理器按文件是否存在返回 404。任一轨失败不影响其余轨与主转码。
+func (t *Transcoder) extractSubtitles(sess *session, tracks []SubtitleTrack) {
+	for i, tr := range tracks {
+		if !tr.Text {
+			continue
+		}
+		out := filepath.Join(sess.dir, fmt.Sprintf("%s%d.vtt", hlsSubPrefix, i))
+		ctx, cancel := context.WithTimeout(t.ctx, subtitleExtractTimeout)
+		cmd := exec.CommandContext(ctx, t.ffmpeg,
+			"-y", "-v", "error",
+			"-i", sess.video.AbsPath(),
+			"-map", fmt.Sprintf("0:%d?", tr.Index), // 单路损坏不拖垮整体
+			"-c:s", "webvtt",
+			out,
+		)
+		if err := cmd.Run(); err != nil {
+			log.Printf("提取内嵌字幕失败 %s 流#%d: %v", sess.video.RelPath, tr.Index, err)
+			cancel()
+			continue
+		}
+		cancel()
+		// ffmpeg 对不足 1 小时的素材会输出 MM:SS.mmm（如 00:01.023），不符合
+		// WebVTT 要求的 HH:MM:SS.mmm，部分浏览器会拒收，统一规整后再落盘。
+		if raw, err := os.ReadFile(out); err == nil {
+			_ = os.WriteFile(out, normalizeVTTTimestamps(raw), 0o644)
+		}
+		log.Printf("已提取内嵌字幕 %s 流#%d → %s.vtt", sess.video.RelPath, tr.Index, strconv.Itoa(i))
+	}
+}
+
+// vttShortTimeRE 匹配缺少小时段的 VTT 时间戳 MM:SS.mmm（可能出现在 cue 行的起止两侧）。
+var vttShortTimeRE = regexp.MustCompile(`(^|[\s>])(\d{2}):(\d{2}[.,]\d{3})`)
+
+// normalizeVTTTimestamps 把 ffmpeg 可能输出的 MM:SS.mmm 补齐为 HH:MM:SS.mmm。
+// 已是 HH:MM:SS 形式（冒号两段以上）的时间戳因锚点不匹配而保持不变。
+func normalizeVTTTimestamps(raw []byte) []byte {
+	return vttShortTimeRE.ReplaceAll(raw, []byte(`${1}00:$2:$3`))
+}
+
 // Get 按视频 ID 查找会话（不存在返回 nil）。
 func (t *Transcoder) Get(videoID string) *session {
 	t.mu.Lock()
@@ -417,10 +476,11 @@ type session struct {
 	started   chan struct{} // ffmpeg 进程尝试启动后关闭（成功或失败）
 	startOnce sync.Once
 
-	mu          sync.Mutex
-	state       sessState
-	cancel      context.CancelFunc
-	audioTracks []AudioTrack // ffprobe 探测到的音轨（单音轨时也填充）
+	mu             sync.Mutex
+	state          sessState
+	cancel         context.CancelFunc
+	audioTracks    []AudioTrack    // ffprobe 探测到的音轨（单音轨时也填充）
+	subtitleTracks []SubtitleTrack // ffprobe 探测到的内嵌字幕轨（含不可提取的位图轨）
 
 	lastAccessV atomicTime // 最近一次被播放器/API 访问的时间
 }
@@ -485,10 +545,11 @@ func (s *session) Status() sessionStatus {
 	defer s.mu.Unlock()
 	multi := s.hasMasterLocked()
 	st := sessionStatus{
-		State:       s.state.String(),
-		HasPlaylist: s.hasPlaylistLocked() || multi,
-		MultiAudio:  multi,
-		AudioTracks: append([]AudioTrack(nil), s.audioTracks...),
+		State:        s.state.String(),
+		HasPlaylist:  s.hasPlaylistLocked() || multi,
+		MultiAudio:   multi,
+		AudioTracks:  append([]AudioTrack(nil), s.audioTracks...),
+		EmbeddedSubs: append([]SubtitleTrack(nil), s.subtitleTracks...),
 	}
 	if ents, err := os.ReadDir(s.dir); err == nil {
 		for _, e := range ents {
@@ -541,6 +602,7 @@ var (
 	simpleSegRE  = regexp.MustCompile(`^seg-\d{5}\.ts$`)
 	variantRE    = regexp.MustCompile(`^out-[0-9A-Za-z_-]+$`)
 	variantSegRE = regexp.MustCompile(`^out-[0-9A-Za-z_-]+-\d{5}\.ts$`)
+	subVTTRE     = regexp.MustCompile(`^sub-\d+\.vtt$`) // 内嵌字幕提取产物
 )
 
 // AssetPath 校验 HLS 资源名并返回磁盘路径，非法或不存在时返回错误。
@@ -553,6 +615,7 @@ func (s *session) AssetPath(name string) (string, error) {
 	case simpleSegRE.MatchString(name):
 	case strings.HasSuffix(name, ".m3u8") && variantRE.MatchString(strings.TrimSuffix(name, ".m3u8")):
 	case variantSegRE.MatchString(name):
+	case subVTTRE.MatchString(name):
 	default:
 		return "", os.ErrNotExist
 	}
@@ -590,6 +653,20 @@ func (s *session) setAudioTracks(tracks []AudioTrack) {
 	s.mu.Lock()
 	s.audioTracks = append([]AudioTrack(nil), tracks...)
 	s.mu.Unlock()
+}
+
+// setSubtitleTracks 记录 ffprobe 探测到的内嵌字幕轨。
+func (s *session) setSubtitleTracks(tracks []SubtitleTrack) {
+	s.mu.Lock()
+	s.subtitleTracks = append([]SubtitleTrack(nil), tracks...)
+	s.mu.Unlock()
+}
+
+// SubtitleTracks 返回内嵌字幕轨快照（含位图轨），供状态 API 渲染字幕菜单。
+func (s *session) SubtitleTracks() []SubtitleTrack {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]SubtitleTrack(nil), s.subtitleTracks...)
 }
 
 // stop 主动终止 ffmpeg 进程（保留磁盘分片）。

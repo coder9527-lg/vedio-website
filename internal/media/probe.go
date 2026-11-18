@@ -22,6 +22,101 @@ type AudioTrack struct {
 	Default  bool   `json:"default"`
 }
 
+// SubtitleTrack 描述一路内嵌字幕流。文本轨（subrip/ass/webvtt/mov_text 等）可提取为
+// WebVTT sidecar；位图轨（PGS/DVD/DVB/XSUB）只能在列表中标注，浏览器无法渲染。
+type SubtitleTrack struct {
+	Index    int    `json:"index"` // 在输入文件中的流序号（ffmpeg -map 0:<index>）
+	Codec    string `json:"codec"` // subrip / ass / webvtt / hdmv_pgs_subtitle / ...
+	Language string `json:"lang"`  // 语言标签，缺失为 "und"
+	Title    string `json:"title"` // 容器内自带的字幕标题
+	Label    string `json:"label"` // 供前端展示的名称
+	Default  bool   `json:"default"`
+	Text     bool   `json:"text"`   // 是否为可提取的文本字幕
+	Bitmap   bool   `json:"bitmap"` // 是否为位图字幕（PGS/DVD 等，无法转 WebVTT）
+}
+
+// bitmapSubtitleCodecs 无法转成 WebVTT 的位图字幕编码。
+var bitmapSubtitleCodecs = map[string]bool{
+	"hdmv_pgs_subtitle": true, // Blu-ray PGS
+	"dvd_subtitle":      true, // DVD-VOBSUB
+	"dvb_subtitle":      true, // DVB
+	"dvb_teletext":      true,
+	"xsub":              true, // AVI DivX
+	"dvdsub":            true,
+}
+
+// ProbeSubtitles 用 ffprobe 列出视频中的全部字幕流（按流序号升序）。
+// 无字幕时返回 nil, nil；探测失败由调用方决定是否降级。
+func ProbeSubtitles(ffprobeBin, path string) ([]SubtitleTrack, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ProbeTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, ffprobeBin,
+		"-v", "error",
+		"-show_entries", "stream=index,codec_type,codec_name:stream_disposition=default:stream_tags=language,title",
+		"-of", "json",
+		path,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed ffprobeJSON
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, err
+	}
+
+	var tracks []SubtitleTrack
+	seenDefault := false
+	ordinal := 0
+	for _, st := range parsed.Streams {
+		if st.CodecType != "subtitle" {
+			continue
+		}
+		ordinal++
+		bitmap := bitmapSubtitleCodecs[st.CodecName]
+		track := SubtitleTrack{
+			Index:    st.Index,
+			Codec:    st.CodecName,
+			Language: normalizeProbeLang(st.Tags["language"]),
+			Title:    st.Tags["title"],
+			Default:  st.Disposition.Default == 1 && !seenDefault,
+			Text:     !bitmap,
+			Bitmap:   bitmap,
+		}
+		if track.Default {
+			seenDefault = true
+		}
+		track.Label = subtitleTrackLabel(track, ordinal)
+		tracks = append(tracks, track)
+	}
+	// 容器未标记默认轨时，第一条文本轨视为默认
+	if len(tracks) > 0 && !seenDefault {
+		for i := range tracks {
+			if tracks[i].Text {
+				tracks[i].Default = true
+				break
+			}
+		}
+	}
+	return tracks, nil
+}
+
+// subtitleTrackLabel 生成内嵌字幕展示名：优先标题，其次语言名，最后用序号兜底。
+func subtitleTrackLabel(t SubtitleTrack, ordinal int) string {
+	if t.Title != "" {
+		return t.Title
+	}
+	if name, ok := languageNames[probeLangKey(t.Language)]; ok {
+		if t.Bitmap {
+			return name + "（图形字幕）"
+		}
+		return name
+	}
+	return "字幕 " + strconv.Itoa(ordinal)
+}
+
 // ffprobeJSON 仅解析我们关心的字段，忽略其余元信息。
 type ffprobeJSON struct {
 	Streams []struct {

@@ -215,6 +215,7 @@ func TestAssetPathValidation(t *testing.T) {
 	for _, name := range []string{
 		"master.m3u8", "out-0.m3u8", "out-a0.m3u8", "out-a1.m3u8",
 		"out-0-00000.ts", "out-a0-00000.ts", "out-a1-00001.ts",
+		"sub-0.vtt", "sub-1.vtt", // 内嵌字幕提取产物
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
@@ -225,6 +226,7 @@ func TestAssetPathValidation(t *testing.T) {
 		"index.m3u8", "master.m3u8", "seg-00001.ts",
 		"out-0.m3u8", "out-a0.m3u8",
 		"out-0-00000.ts", "out-a1-00001.ts",
+		"sub-0.vtt", "sub-1.vtt",
 	}
 	for _, name := range valid {
 		if _, err := sess.AssetPath(name); err != nil {
@@ -240,6 +242,9 @@ func TestAssetPathValidation(t *testing.T) {
 		"out-.m3u8",       // 变体名为空
 		"out-a0/evil.ts",  // 子目录
 		"out-a0-0001.vtt", // 错误后缀
+		"sub-.vtt",        // 字幕序号不能为空
+		"sub-0.txt",       // 字幕仅允许 vtt
+		"subx-0.vtt",      // 前缀必须精确
 	} {
 		if _, err := sess.AssetPath(bad); err == nil {
 			t.Errorf("非法资源名 %q 应被拒绝", bad)
@@ -345,6 +350,103 @@ func TestTranscoderMultiAudio(t *testing.T) {
 		if _, err := sess.AssetPath(name); err != nil {
 			t.Errorf("多音轨资源 %q 应可访问: %v", name, err)
 		}
+	}
+}
+
+// writeEmbeddedSubVideo 生成含两路内嵌文本字幕的 MKV（供提取测试）。
+func writeEmbeddedSubVideo(t *testing.T, dir string) string {
+	t.Helper()
+	srtPath := filepath.Join(dir, "in.srt")
+	assPath := filepath.Join(dir, "in.ass")
+	videoPath := filepath.Join(dir, "subbed.mkv")
+	if err := os.WriteFile(srtPath, []byte("1\n00:00:01,000 --> 00:00:03,000\n内嵌中文字幕\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(assPath, []byte("[Script Info]\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:02.00,0:00:04.00,Default,,0,0,0,,ASS English line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("ffmpeg", "-v", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=6",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+		"-i", srtPath, "-i", assPath,
+		"-map", "0:v", "-map", "1:a", "-map", "2:s", "-map", "3:s",
+		"-metadata:s:s:0", "language=chi", "-metadata:s:s:0", "title=中字",
+		"-metadata:s:s:1", "language=eng",
+		"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-c:s", "srt",
+		videoPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("生成内嵌字幕视频失败: %v\n%s", err, out)
+	}
+	return videoPath
+}
+
+func TestTranscoderExtractsEmbeddedSubtitles(t *testing.T) {
+	if !ffmpegAvailable() || !ffprobeAvailable() {
+		t.Skip("环境无 ffmpeg/ffprobe，跳过内嵌字幕提取测试")
+	}
+	mediaDir := t.TempDir()
+	writeEmbeddedSubVideo(t, mediaDir)
+
+	lib := NewLibrary(mediaDir, DefaultExts)
+	if _, err := lib.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	v := lib.List()[0]
+
+	tc, err := NewTranscoder(t.TempDir(), "ffmpeg", "ffprobe", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tc.Close()
+
+	sess, err := tc.Ensure(v)
+	if err != nil {
+		t.Fatalf("Ensure 失败: %v", err)
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		if sess.Status().State == "failed" {
+			t.Fatal("转码会话进入 failed 状态")
+		}
+		if sess.Status().State == "done" {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	// 状态应带回两路内嵌字幕轨，且均为可提取文本轨
+	st := sess.Status()
+	if len(st.EmbeddedSubs) != 2 {
+		t.Fatalf("期望状态返回 2 路内嵌字幕，got %d", len(st.EmbeddedSubs))
+	}
+	for _, s := range st.EmbeddedSubs {
+		if !s.Text || s.Bitmap {
+			t.Errorf("内嵌 SRT/ASS 应标记为文本轨: %+v", s)
+		}
+	}
+
+	// 两路字幕都应被提取为 sub-0.vtt / sub-1.vtt，且能通过白名单访问
+	for _, name := range []string{"sub-0.vtt", "sub-1.vtt"} {
+		p, err := sess.AssetPath(name)
+		if err != nil {
+			t.Fatalf("提取产物 %s 应可访问: %v", name, err)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("读取 %s 失败: %v", name, err)
+		}
+		if !strings.HasPrefix(string(raw), "WEBVTT") {
+			t.Fatalf("%s 应为 WebVTT，got %q", name, string(raw)[:min(20, len(raw))])
+		}
+	}
+}
+
+func TestNormalizeVTTTimestamps(t *testing.T) {
+	in := []byte("WEBVTT\n\n00:01.023 --> 00:03.023\n你好\n\n01:02:03.500 --> 01:02:04.000\n长片\n")
+	out := string(normalizeVTTTimestamps(in))
+	want := "WEBVTT\n\n00:00:01.023 --> 00:00:03.023\n你好\n\n01:02:03.500 --> 01:02:04.000\n长片\n"
+	if out != want {
+		t.Errorf("时间戳规整结果不符\n got: %q\nwant: %q", out, want)
 	}
 }
 

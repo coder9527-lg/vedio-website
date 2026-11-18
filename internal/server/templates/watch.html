@@ -35,8 +35,15 @@
     </div>
     {{end}}
     <div class="player-controls" id="player-controls">
-      {{if .Subtitles}}
-      <div class="track-menu">
+      {{if .TranscodeOn}}
+      <div class="track-menu" id="sub-menu-wrap" {{if not .Subtitles}}hidden{{end}}>
+        <button type="button" id="sub-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
+          字幕 <span class="caret">▾</span>
+        </button>
+        <div class="track-dropdown" id="sub-dropdown" role="menu"></div>
+      </div>
+      {{else if .Subtitles}}
+      <div class="track-menu" id="sub-menu-wrap">
         <button type="button" id="sub-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
           字幕 <span class="caret">▾</span>
         </button>
@@ -159,6 +166,10 @@
               } else {
                 hideAudioMenu();
               }
+              // 注入内嵌字幕（提取为 sub-N.vtt 的文本轨；位图轨已在后端过滤）
+              if (window.SubtitleMenu && Array.isArray(data.embeddedSubtitles)) {
+                window.SubtitleMenu.addEmbedded(data.embeddedSubtitles, videoId);
+              }
               attachHls();
               return;
             }
@@ -268,64 +279,131 @@
   </script>
   {{end}}
 
-  {{if .Subtitles}}
+  {{if .TranscodeOn}}
   <script>
-    (() => {
-      // ---- 外挂字幕菜单：统一管理 <track> 的开关（原画/HLS 两种模式共用）----
+    // ---- 字幕菜单：统一管理外挂 <track> 与转码后动态注入的内嵌字幕 ----
+    // 外挂字幕在服务端渲染时已生成 <track>；内嵌字幕需转码后根据状态接口注入。
+    window.SubtitleMenu = (() => {
       const player = document.getElementById('player');
-      const subBtn = document.getElementById('sub-menu-btn');
-      const subDropdown = document.getElementById('sub-dropdown');
-      if (!subBtn || !subDropdown) return;
+      const wrap = document.getElementById('sub-menu-wrap');
+      const btn = document.getElementById('sub-menu-btn');
+      const dropdown = document.getElementById('sub-dropdown');
+      if (!btn || !dropdown) return null;
 
-      function tracks() { return Array.from(player.textTracks); }
+      const tracks = () => Array.from(player.textTracks);
+      let currentLabel = null; // 当前选中的轨道 label，用于注入后恢复选择
+
       function buildMenu() {
-        subDropdown.innerHTML = '';
+        const list = tracks();
+        wrap.hidden = list.length === 0;
+        dropdown.innerHTML = '';
         const off = document.createElement('button');
         off.type = 'button';
-        off.className = 'track-item current';
+        off.className = 'track-item' + (currentLabel === null ? ' current' : '');
         off.textContent = '关闭字幕';
-        off.addEventListener('click', () => select(-1, off));
-        subDropdown.appendChild(off);
+        off.addEventListener('click', () => select(null, off));
+        dropdown.appendChild(off);
 
-        tracks().forEach((track, i) => {
+        list.forEach((track) => {
           const item = document.createElement('button');
           item.type = 'button';
-          item.className = 'track-item';
-          item.textContent = track.label || ('字幕 ' + (i + 1));
-          if (track.mode === 'showing') {
-            off.classList.remove('current');
-            item.classList.add('current');
-          }
-          item.addEventListener('click', () => select(i, item));
-          subDropdown.appendChild(item);
+          item.className = 'track-item' + (track.mode === 'showing' ? ' current' : '');
+          item.textContent = track.label || '字幕';
+          item.addEventListener('click', () => select(track.label, item));
+          dropdown.appendChild(item);
         });
       }
-      function select(index, btn) {
-        tracks().forEach((t, i) => { t.mode = (i === index) ? 'showing' : 'disabled'; });
-        subDropdown.querySelectorAll('.track-item').forEach(el => el.classList.remove('current'));
-        if (btn) btn.classList.add('current');
+      function select(label, btnEl) {
+        currentLabel = label;
+        tracks().forEach((t) => { t.mode = (t.label === label) ? 'showing' : 'disabled'; });
+        dropdown.querySelectorAll('.track-item').forEach(el => el.classList.remove('current'));
+        if (btnEl) btnEl.classList.add('current');
       }
-      // 浏览器对 default 字幕的初始 mode 不一致（showing/hidden），统一改为 hidden，由菜单控制
-      tracks().forEach(t => { if (t.mode !== 'disabled') t.mode = 'hidden'; });
-      // 默认开启标记为 default 的中文字幕
-      const initial = tracks().findIndex(t => {
-        const el = player.querySelector('track[default]');
-        return el && t.label === el.label;
-      });
-      if (initial >= 0) select(initial, null);
+      function applyMode() {
+        tracks().forEach((t) => {
+          t.mode = (t.label === currentLabel) ? 'showing' : 'disabled';
+        });
+      }
+      // 已注入过的内嵌轨道 label，避免重复添加
+      const injected = new Set();
+      // addEmbedded 根据转码状态接口的 embeddedSubtitles 注入可提取的内嵌字幕。
+      function addEmbedded(list, videoId) {
+        if (!Array.isArray(list)) return;
+        list.forEach((s, i) => {
+          if (s.bitmap || !s.text) return; // 位图字幕无法在网页渲染
+          const label = '[内嵌] ' + (s.label || ('字幕 ' + (i + 1)));
+          if (injected.has(label)) return;
+          injected.add(label);
+          const el = document.createElement('track');
+          el.kind = 'subtitles';
+          el.label = label;
+          el.srclang = s.lang || 'und';
+          el.src = '/hls/' + videoId + '/sub-' + i + '.vtt';
+          player.appendChild(el);
+          if (s.default && currentLabel === null) currentLabel = label;
+        });
+        buildMenu();
+        applyMode();
+      }
 
-      subBtn.addEventListener('click', (e) => {
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        subDropdown.classList.toggle('open');
-        subBtn.setAttribute('aria-expanded', subDropdown.classList.contains('open'));
+        dropdown.classList.toggle('open');
+        btn.setAttribute('aria-expanded', dropdown.classList.contains('open'));
       });
       document.addEventListener('click', (e) => {
-        if (!subDropdown.contains(e.target)) {
-          subDropdown.classList.remove('open');
-          subBtn.setAttribute('aria-expanded', 'false');
+        if (!dropdown.contains(e.target)) {
+          dropdown.classList.remove('open');
+          btn.setAttribute('aria-expanded', 'false');
         }
       });
-      // hls.js 重建媒体源后 <track> 仍然保留，但 mode 可能被重置，菜单内容不变
+
+      // 服务端渲染的外挂 <track>：统一初始 mode，默认开启带 default 的轨道
+      const def = player.querySelector('track[default]');
+      if (def) currentLabel = def.label;
+      tracks().forEach((t) => { t.mode = (t.label === currentLabel) ? 'showing' : 'disabled'; });
+      buildMenu();
+      return { addEmbedded, buildMenu, applyMode };
+    })();
+  </script>
+  {{else if .Subtitles}}
+  <script>
+    // 未启用转码时只有外挂字幕，保留原有的静态菜单逻辑
+    (() => {
+      const player = document.getElementById('player');
+      const btn = document.getElementById('sub-menu-btn');
+      const dropdown = document.getElementById('sub-dropdown');
+      if (!btn || !dropdown) return;
+      const tracks = () => Array.from(player.textTracks);
+      function buildMenu() {
+        dropdown.innerHTML = '';
+        const off = document.createElement('button');
+        off.type = 'button'; off.className = 'track-item current'; off.textContent = '关闭字幕';
+        off.addEventListener('click', () => select(null, off));
+        dropdown.appendChild(off);
+        tracks().forEach((track) => {
+          const item = document.createElement('button');
+          item.type = 'button'; item.className = 'track-item';
+          item.textContent = track.label || '字幕';
+          item.addEventListener('click', () => select(track.label, item));
+          dropdown.appendChild(item);
+        });
+      }
+      function select(label, btnEl) {
+        tracks().forEach((t) => { t.mode = (t.label === label) ? 'showing' : 'disabled'; });
+        dropdown.querySelectorAll('.track-item').forEach(el => el.classList.remove('current'));
+        if (btnEl) btnEl.classList.add('current');
+      }
+      const def = player.querySelector('track[default]');
+      tracks().forEach((t) => { t.mode = (def && t.label === def.label) ? 'showing' : 'disabled'; });
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+        btn.setAttribute('aria-expanded', dropdown.classList.contains('open'));
+      });
+      document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target)) { dropdown.classList.remove('open'); }
+      });
       buildMenu();
     })();
   </script>

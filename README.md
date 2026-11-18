@@ -11,6 +11,7 @@
 - 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖
 - 🔊 **多音轨支持**：ffprobe 自动探测视频中的多路音轨（语言/标题），转码时产出带 `EXT-X-MEDIA` 音频分组的 master 播放列表，播放页可在音轨菜单中切换；单音轨视频保持简单布局不变
 - 💬 **外挂字幕自动挂载**：同目录或 `subs/`/`subtitles/`/`字幕/` 子目录中同名（可带语言/SDH/强制后缀，如 `Movie.zh-CN.srt`、`Movie.en.forced.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端纯 Go 统一转 WebVTT（无需额外进程/磁盘缓存），通过 `<track>` 在原画与转码两种模式下均可切换
+- 📝 **内嵌字幕提取**：转码时自动把视频内封装的文本字幕（SRT/ASS/WebVTT/MOV_TEXT）提取为 WebVTT 并挂进同一个字幕菜单（标注「[内嵌]」）；位图字幕（PGS/DVD 等）仅识别不提取
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
 - 🔒 **可选访问密码**：设置 `AUTH_PASSWORD` 即开启登录页，HMAC 签名 HttpOnly Cookie 无状态鉴权（无需数据库），含失败限流与开放重定向防护
@@ -177,7 +178,7 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - 语言标签覆盖中英日韩法德西俄意葡泰越阿印等常见代码（含 `zh-CN/zh-Hant/chs/cht` 等别名），未识别的后缀原样展示、不丢弃；
 - 字幕经标准 `<track>` 挂载，**原画直链与 HLS 转码两种播放模式通用**，播放页「字幕」菜单可开关；中文/`default` 字幕默认开启；
 - 文件监听覆盖字幕增删：拷贝进来或删除字幕文件后（防抖窗口结束）自动刷新关联，无需重扫；
-- 位图字幕（PGS/DVD-VOBSUB 等）无法转 WebVTT，内嵌字幕轨在转码时仍按 `-sn` 丢弃（见路线图）。
+- **内嵌字幕**：视频内封装的文本字幕（subrip/ASS/WebVTT/MOV_TEXT 等）在转码启动时由 ffmpeg 逐路提取为转码目录下的 `sub-N.vtt`（自动把 `MM:SS.mmm` 规整为标准 `HH:MM:SS.mmm`），与外挂字幕共用播放页「字幕」菜单，名称带「[内嵌]」前缀；位图字幕（PGS/DVD-VOBSUB/DVB/XSUB）受技术限制无法转 WebVTT，仅识别不提取，转码主流程仍以 `-sn` 丢弃其图像流。
 
 > 转码是 CPU 密集型任务，低配 NAS 建议把 `TRANSCODE_MAX` 设为 `1`，并优先在局域网内使用。
 
@@ -195,5 +196,5 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - [x] ffmpeg HLS 在线转码（按需转 H.264/AAC、并发排队、空闲回收，见 `TRANSCODE_*`）
 - [x] 外挂字幕自动挂载（SRT/VTT/ASS/SSA → WebVTT，原画/转码通用，见「外挂字幕」）
 - [x] 多音轨支持（ffprobe 探测 + HLS 音频分组，播放页切换）
-- [ ] 内嵌字幕轨转 HLS WebVTT（当前转码 `-sn` 丢弃内嵌轨，位图字幕受 ffmpeg mpegts 限制）
+- [x] 内嵌文本字幕提取为 WebVTT（转码启动时 ffmpeg 导出 `sub-N.vtt` 并复用字幕菜单；位图字幕 PGS/DVD 等暂不支持）
 - [ ] 海报/元信息刮削（NFO、TMDB）

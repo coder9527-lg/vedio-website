@@ -84,10 +84,14 @@ func (s *Server) handleHLSAsset(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if strings.HasSuffix(name, ".m3u8") {
+	switch {
+	case strings.HasSuffix(name, ".m3u8"):
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Cache-Control", "no-store") // 媒体列表同样随转码进度追加
-	} else {
+	case strings.HasSuffix(name, ".vtt"):
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "private, max-age=31536000") // 提取产物内容不变
+	default:
 		w.Header().Set("Content-Type", "video/mp2t")
 		// 分片一旦写完内容不变，可长期缓存
 		w.Header().Set("Cache-Control", "private, max-age=31536000")
