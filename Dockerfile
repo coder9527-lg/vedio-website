@@ -14,8 +14,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/vedio-s
 # ---- 运行阶段 ----
 FROM alpine:3.21
 
-# ffmpeg 用于缩略图，ca-certificates 用于 HTTPS，tzdata 用于正确时区
-RUN apk add --no-cache ffmpeg ca-certificates tzdata su-exec
+# ffmpeg 用于缩略图与 HLS 转码，ca-certificates 用于 HTTPS，tzdata 用于正确时区，su-exec 用于降权运行
+# mesa-va-gallium/libva/intel-media-driver 为 Intel 核显 VAAPI 硬解硬编驱动；
+# 默认仍走 CPU 软转，仅在设置 TRANSCODE_HWACCEL=vaapi 并映射 /dev/dri 后启用
+RUN apk add --no-cache ffmpeg ca-certificates tzdata su-exec \
+    mesa-va-gallium libva intel-media-driver
 
 ENV TZ=Asia/Shanghai \
     PORT=8080 \
@@ -34,3 +37,7 @@ EXPOSE 8080
 VOLUME ["/media", "/data"]
 
 ENTRYPOINT ["/entrypoint.sh"]
+
+# 容器健康探针：alpine 自带 busybox wget，无需额外安装
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD wget -q -O - "http://127.0.0.1:${PORT:-8080}/healthz" || exit 1

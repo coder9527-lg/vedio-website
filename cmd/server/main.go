@@ -65,8 +65,10 @@ func main() {
 			tc = nil
 		} else {
 			transcoder = tc
-			log.Printf("HLS 在线转码已开启（并发上限 %d，空闲超时 %s，缓存目录 %s）",
-				cfg.TranscodeMax, cfg.TranscodeIdleTimeout, cfg.TranscodeDir)
+			// 硬件加速（可选）：默认空值走 CPU 软转；设备不可用或模式未知时内部自动回退
+			transcoder.SetHWAccel(cfg.TranscodeHWAccel, cfg.TranscodeVAAPIDevice)
+			log.Printf("HLS 在线转码已开启（编码档位: %s，并发上限 %d，空闲超时 %s，缓存目录 %s）",
+				transcoder.HWAccelMode(), cfg.TranscodeMax, cfg.TranscodeIdleTimeout, cfg.TranscodeDir)
 		}
 		// 位图字幕 OCR（可选）：tesseract 缺失或显式关闭时降级，位图字幕仅识别不提取
 		if transcoder != nil && cfg.OCREnabled {

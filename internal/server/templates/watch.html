@@ -68,6 +68,18 @@
         </button>
         <div class="track-dropdown" id="audio-dropdown" role="menu"></div>
       </div>
+      <div class="track-menu" id="speed-menu-wrap">
+        <button type="button" id="speed-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
+          倍速 <span class="caret">▾</span>
+        </button>
+        <div class="track-dropdown" id="speed-dropdown" role="menu"></div>
+      </div>
+      <div class="track-menu" id="cue-menu-wrap">
+        <button type="button" id="cue-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
+          字幕字号 <span class="caret">▾</span>
+        </button>
+        <div class="track-dropdown" id="cue-dropdown" role="menu"></div>
+      </div>
     </div>
     <div class="player-wrap">
       <video id="player" controls preload="metadata" playsinline
@@ -810,5 +822,126 @@
     })();
   </script>
   {{end}}
+
+  <!-- 播放器增强：倍速、字幕字号、键盘快捷键（原画与转码通用，无条件渲染） -->
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const playerWrap = document.querySelector('.player-wrap');
+      if (!player) return;
+
+      // ---- 通用下拉菜单开合：点击按钮切换，点击外部收起 ----
+      function bindDropdown(btnId, dropdownId) {
+        const btn = document.getElementById(btnId);
+        const dropdown = document.getElementById(dropdownId);
+        if (!btn || !dropdown) return;
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          // 打开一个菜单前先收起其它菜单
+          document.querySelectorAll('.track-dropdown.open').forEach((d) => {
+            if (d !== dropdown) d.classList.remove('open');
+          });
+          dropdown.classList.toggle('open');
+          btn.setAttribute('aria-expanded', dropdown.classList.contains('open'));
+        });
+        document.addEventListener('click', (e) => {
+          if (!dropdown.contains(e.target)) {
+            dropdown.classList.remove('open');
+            btn.setAttribute('aria-expanded', 'false');
+          }
+        });
+      }
+
+      // ---- 倍速菜单 ----
+      const speedDropdown = document.getElementById('speed-dropdown');
+      const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+      speeds.forEach((rate) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'track-item' + (rate === 1 ? ' current' : '');
+        item.textContent = rate + 'x';
+        item.addEventListener('click', () => {
+          player.playbackRate = rate;
+          speedDropdown.querySelectorAll('.track-item').forEach((el) => el.classList.remove('current'));
+          item.classList.add('current');
+        });
+        speedDropdown.appendChild(item);
+      });
+      bindDropdown('speed-menu-btn', 'speed-dropdown');
+
+      // ---- 字幕字号：通过 #player 的 class 驱动 ::cue 字号 ----
+      const cueDropdown = document.getElementById('cue-dropdown');
+      const cueSizes = [
+        { label: '小', cls: 'cue-sm' },
+        { label: '中', cls: 'cue-md' },
+        { label: '大', cls: 'cue-lg' },
+      ];
+      cueSizes.forEach((size, idx) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'track-item' + (idx === 1 ? ' current' : ''); // 默认中
+        item.textContent = size.label;
+        item.addEventListener('click', () => {
+          player.classList.remove('cue-sm', 'cue-md', 'cue-lg');
+          player.classList.add(size.cls);
+          cueDropdown.querySelectorAll('.track-item').forEach((el) => el.classList.remove('current'));
+          item.classList.add('current');
+        });
+        cueDropdown.appendChild(item);
+      });
+      player.classList.add('cue-md'); // 默认中字号
+      bindDropdown('cue-menu-btn', 'cue-dropdown');
+
+      // ---- 键盘快捷键 ----
+      // 守卫：输入控件聚焦、弹窗打开时不拦截，交给页面原有行为；
+      // 焦点就在 video 上时也交给浏览器原生控件，避免双触发。
+      function shouldIgnore(e) {
+        if (e.target === player) return true;
+        const tag = (e.target.tagName || '').toLowerCase();
+        if (['input', 'textarea', 'select', 'button'].includes(tag)) return true;
+        return Boolean(document.querySelector('.scrape-modal:not([hidden]), .pl-modal:not([hidden])'));
+      }
+      document.addEventListener('keydown', (e) => {
+        if (shouldIgnore(e)) return;
+        switch (e.key) {
+          case ' ':
+          case 'k':
+            e.preventDefault();
+            if (player.paused) player.play(); else player.pause();
+            break;
+          case 'ArrowLeft':
+            e.preventDefault();
+            player.currentTime = Math.max(0, player.currentTime - 5);
+            break;
+          case 'ArrowRight':
+            e.preventDefault();
+            player.currentTime = Math.min(player.duration || Infinity, player.currentTime + 5);
+            break;
+          case 'ArrowUp':
+            e.preventDefault();
+            player.volume = Math.min(1, Number((player.volume + 0.1).toFixed(2)));
+            break;
+          case 'ArrowDown':
+            e.preventDefault();
+            player.volume = Math.max(0, Number((player.volume - 0.1).toFixed(2)));
+            break;
+          case 'f':
+          case 'F':
+            e.preventDefault();
+            if (document.fullscreenElement) document.exitFullscreen();
+            else if (playerWrap) playerWrap.requestFullscreen?.();
+            else player.requestFullscreen?.();
+            break;
+          case 'm':
+          case 'M':
+            e.preventDefault();
+            player.muted = !player.muted;
+            break;
+          default:
+            break;
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

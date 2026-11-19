@@ -82,6 +82,8 @@ type Transcoder struct {
 	maxConcurrent int
 	idleTimeout   time.Duration
 	ocr           *OCRer // 可选：位图字幕（PGS/DVD 等）OCR 转 WebVTT，nil 则跳过位图轨
+	hwaccel       string // 硬件加速模式：空=CPU 软转（默认），"vaapi"=VAAPI
+	vaapiDevice   string // VAAPI 渲染节点路径（如 /dev/dri/renderD128）
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -96,6 +98,37 @@ type Transcoder struct {
 // 「仅识别不提取」的原有行为。必须在首个转码会话启动前调用。
 func (t *Transcoder) SetOCRer(ocr *OCRer) {
 	t.ocr = ocr
+}
+
+// SetHWAccel 配置硬件加速模式。mode 为空表示 CPU 软转（默认）；
+// 当前仅支持 "vaapi"（Intel/核显），未知模式告警并回退软转。
+// VAAPI 设备节点在启动期预检，不可访问时同样回退软转，
+// 避免容器未映射 /dev/dri 时每个转码会话都在运行期失败。
+// 必须在首个转码会话启动前调用。
+func (t *Transcoder) SetHWAccel(mode, device string) {
+	mode = strings.TrimSpace(mode)
+	switch mode {
+	case "":
+		t.hwaccel, t.vaapiDevice = "", ""
+	case "vaapi":
+		if _, err := os.Stat(device); err != nil {
+			log.Printf("警告: VAAPI 设备 %s 不可访问（%v），回退 CPU 软转", device, err)
+			t.hwaccel, t.vaapiDevice = "", ""
+			return
+		}
+		t.hwaccel, t.vaapiDevice = "vaapi", device
+	default:
+		log.Printf("警告: 未知硬件加速模式 %q，回退 CPU 软转（当前支持: vaapi）", mode)
+		t.hwaccel, t.vaapiDevice = "", ""
+	}
+}
+
+// HWAccelMode 返回当前实际生效的硬件加速模式（供启动日志与诊断使用）。
+func (t *Transcoder) HWAccelMode() string {
+	if t.hwaccel == "" {
+		return "软件转码(libx264)"
+	}
+	return t.hwaccel + "(" + t.vaapiDevice + ")"
 }
 
 // NewTranscoder 创建转码器并清空旧的转码产物（残留的临时目录不可信）。
@@ -285,37 +318,72 @@ func (t *Transcoder) run(sess *session) {
 	sess.setState(stateDone)
 }
 
-// buildArgs 根据探测到的音轨数生成 ffmpeg 参数。
+// encodeProfile 描述一次转码的编码档位，使参数拼装成为不依赖实例的纯函数，
+// 便于在无 ffmpeg/无 GPU 的环境下单测软转与硬转两套参数。
+type encodeProfile struct {
+	hwaccel     string // 硬件加速模式：空=软转，"vaapi"=VAAPI
+	vaapiDevice string // VAAPI 渲染节点路径
+}
+
+// buildFFmpegArgs 根据输入视频、输出目录、探测到的音轨与编码档位生成 ffmpeg 参数。
 //   - 0~1 路音频：简单布局，单个 index.m3u8 + seg-xxxxx.ts（保持旧行为与测试不变）；
 //   - 2 路及以上：变体布局，master.m3u8 为入口，视频与每路音频各自一个媒体播放列表，
 //     前端通过 EXT-X-MEDIA 音频分组切换音轨，视频流只编码一份以节省 CPU。
-func (t *Transcoder) buildArgs(sess *session, tracks []AudioTrack) []string {
+func buildFFmpegArgs(videoPath, outDir string, tracks []AudioTrack, p encodeProfile) []string {
 	// 编解码与 HLS 公共选项（不含输入与 -map，二者随音轨数变化）。
-	opts := []string{
-		"-c:v", "libx264",
-		"-preset", "veryfast",
-		"-crf", "23",
-		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // H.264 要求偶数像素
-		"-c:a", "aac", "-b:a", "128k",
-		"-ac", "2",
-		"-sn", // 丢弃内嵌字幕轨：外挂字幕通过 <track> 提供，位图字幕无法转 WebVTT
-		"-f", "hls",
-		"-hls_time", fmt.Sprintf("%d", hlsSegmentTime),
-		// 不设 hls_playlist_type=vod：vod 语义下 ffmpeg 到转码结束才写 m3u8，
-		// 无法边转边播。默认 event 语义下列表实时追加，完成时自动补 ENDLIST。
-		"-hls_flags", "append_list+independent_segments",
-		"-hls_list_size", "0", // 保留全部分片，支持回看与断点续播
+	var opts []string
+	if p.hwaccel == "vaapi" {
+		// VAAPI 硬解硬编：输入前初始化硬件设备，输出帧保持 VAAPI 表面格式，
+		// scale_vaapi 同时完成缩放与像素格式转换（nv12 为 h264_vaapi 通用输入格式）。
+		opts = []string{
+			"-c:v", "h264_vaapi",
+			"-b:v", "4000k", // VAAPI 不支持 crf/preset，使用目标码率控制
+			"-vf", "scale_vaapi=format=nv12",
+			"-c:a", "aac", "-b:a", "128k",
+			"-ac", "2",
+			"-sn", // 丢弃内嵌字幕轨：外挂字幕通过 <track> 提供，位图字幕无法转 WebVTT
+			"-f", "hls",
+			"-hls_time", fmt.Sprintf("%d", hlsSegmentTime),
+			"-hls_flags", "append_list+independent_segments",
+			"-hls_list_size", "0",
+		}
+	} else {
+		opts = []string{
+			"-c:v", "libx264",
+			"-preset", "veryfast",
+			"-crf", "23",
+			"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // H.264 要求偶数像素
+			"-c:a", "aac", "-b:a", "128k",
+			"-ac", "2",
+			"-sn",
+			"-f", "hls",
+			"-hls_time", fmt.Sprintf("%d", hlsSegmentTime),
+			// 不设 hls_playlist_type=vod：vod 语义下 ffmpeg 到转码结束才写 m3u8，
+			// 无法边转边播。默认 event 语义下列表实时追加，完成时自动补 ENDLIST。
+			"-hls_flags", "append_list+independent_segments",
+			"-hls_list_size", "0", // 保留全部分片，支持回看与断点续播
+		}
 	}
 
-	args := []string{"-y", "-i", sess.video.AbsPath()}
+	args := []string{"-y"}
+	if p.hwaccel == "vaapi" {
+		// 硬件加速选项必须位于 -i 之前：初始化设备并让解码帧直接留在显存
+		args = append(args,
+			"-hwaccel", "vaapi",
+			"-init_hw_device", "vaapi=va:"+p.vaapiDevice,
+			"-hwaccel_device", "va",
+			"-hwaccel_output_format", "vaapi",
+		)
+	}
+	args = append(args, "-i", videoPath)
 
 	if len(tracks) <= 1 {
 		// 简单布局：单个 index.m3u8 + seg-xxxxx.ts，取第一路视频/音频
 		args = append(args, "-map", "0:v:0", "-map", "0:a:0?") // 无音频轨也不报错
 		args = append(args, opts...)
 		args = append(args,
-			"-hls_segment_filename", filepath.Join(sess.dir, "seg-%05d.ts"),
-			filepath.Join(sess.dir, hlsPlaylistName),
+			"-hls_segment_filename", filepath.Join(outDir, "seg-%05d.ts"),
+			filepath.Join(outDir, hlsPlaylistName),
 		)
 		return args
 	}
@@ -341,10 +409,16 @@ func (t *Transcoder) buildArgs(sess *session, tracks []AudioTrack) []string {
 	args = append(args,
 		"-master_pl_name", hlsMasterName,
 		"-var_stream_map", strings.Join(streamMap, " "),
-		"-hls_segment_filename", filepath.Join(sess.dir, "out-%v-%05d.ts"),
-		filepath.Join(sess.dir, "out-%v.m3u8"),
+		"-hls_segment_filename", filepath.Join(outDir, "out-%v-%05d.ts"),
+		filepath.Join(outDir, "out-%v.m3u8"),
 	)
 	return args
+}
+
+// buildArgs 是 buildFFmpegArgs 的实例薄封装，注入当前转码器的硬件加速档位。
+func (t *Transcoder) buildArgs(sess *session, tracks []AudioTrack) []string {
+	return buildFFmpegArgs(sess.video.AbsPath(), sess.dir, tracks,
+		encodeProfile{hwaccel: t.hwaccel, vaapiDevice: t.vaapiDevice})
 }
 
 // masterAudioLineRE 匹配 master 播放列表中的 EXT-X-MEDIA 音频行，替换 NAME 属性。

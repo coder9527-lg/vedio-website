@@ -21,6 +21,8 @@ type Config struct {
 	TranscodeDir         string        // HLS 分片缓存目录
 	TranscodeMax         int           // 同时运行的 ffmpeg 转码任务上限
 	TranscodeIdleTimeout time.Duration // 无客户端后多久停止转码进程（分片保留）
+	TranscodeHWAccel     string        // 硬件加速模式：空=CPU 软转（默认），"vaapi"=Intel 核显 VAAPI
+	TranscodeVAAPIDevice string        // VAAPI 渲染节点设备路径，默认 /dev/dri/renderD128
 
 	// 位图字幕 OCR：把 PGS/DVD 等位图字幕经 tesseract 识别为 WebVTT（可选依赖）
 	OCREnabled   bool   // 是否启用位图字幕 OCR，tesseract 缺失时自动降级
@@ -65,6 +67,8 @@ func Load() *Config {
 		TranscodeDir:         getenv("TRANSCODE_DIR", "/data/transcode"),
 		TranscodeMax:         parseInt("TRANSCODE_MAX", 2),
 		TranscodeIdleTimeout: parseDuration("TRANSCODE_IDLE_TIMEOUT", 30*time.Minute),
+		TranscodeHWAccel:     os.Getenv("TRANSCODE_HWACCEL"),
+		TranscodeVAAPIDevice: getenv("TRANSCODE_VAAPI_DEVICE", "/dev/dri/renderD128"),
 
 		OCREnabled:   getenv("OCR_ENABLED", "true") != "false",
 		TesseractBin: getenv("TESSERACT_BIN", "tesseract"),

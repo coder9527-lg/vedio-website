@@ -39,6 +39,7 @@ type indexData struct {
 	View      string                  // all | favorites | continue | playlists
 	Type      string                  // all | movie | show
 	StoreOn   bool                    // 是否启用持久化
+	ScrapeOn  bool                    // 是否启用 TMDB 在线刮削
 	Playlists []store.PlaylistSummary // view=playlists 时的列表摘要
 }
 
@@ -104,6 +105,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		View:      view,
 		Type:      typeFilter,
 		StoreOn:   s.storeEnabled(),
+		ScrapeOn:  s.scraperEnabled(),
 		Playlists: playlists,
 	})
 }

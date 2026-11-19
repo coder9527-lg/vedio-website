@@ -20,9 +20,10 @@ var assets embed.FS
 type Server struct {
 	library       *media.Library
 	thumbs        *media.Thumbnailer
-	transcoder    *media.Transcoder // nil 表示未启用 HLS 在线转码
-	store         *store.Store      // nil 表示未启用持久化（播放进度/收藏不可用）
-	scraper       *media.Scraper    // nil 表示未启用 TMDB 在线刮削
+	transcoder    *media.Transcoder  // nil 表示未启用 HLS 在线转码
+	store         *store.Store       // nil 表示未启用持久化（播放进度/收藏不可用）
+	scraper       *media.Scraper     // nil 表示未启用 TMDB 在线刮削
+	bulkScraper   *media.BulkScraper // 全库批量刮削编排器，与 scraper 同时启用/关闭
 	tmpl          *template.Template
 	authenticator *auth.Authenticator // nil 表示未开启访问密码
 	cookieSecure  bool
@@ -33,7 +34,7 @@ func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Tr
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
+	srv := &Server{
 		library:       library,
 		thumbs:        thumbs,
 		transcoder:    transcoder,
@@ -42,7 +43,12 @@ func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Tr
 		tmpl:          tmpl,
 		authenticator: authenticator,
 		cookieSecure:  cookieSecure,
-	}, nil
+	}
+	// 批量刮削与单视频刮削同生命周期：scraper 为 nil（未配 TMDB_API_KEY）时保持 nil
+	if scraper != nil {
+		srv.bulkScraper = media.NewBulkScraper(scraper, library)
+	}
+	return srv, nil
 }
 
 // storeEnabled 判断是否启用了 SQLite 持久化。
@@ -53,7 +59,7 @@ func (s *Server) authEnabled() bool { return s.authenticator != nil }
 
 // isPublicPath 开启认证后仍允许匿名访问的路径前缀/精确路径。
 func isPublicPath(path string) bool {
-	if path == "/login" {
+	if path == "/login" || path == "/healthz" {
 		return true
 	}
 	return strings.HasPrefix(path, "/static/") ||
@@ -89,6 +95,9 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
+	// 容器健康探针（认证放行，供 Docker HEALTHCHECK 匿名访问）
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /watch/{id}", s.handleWatch)
 	mux.HandleFunc("GET /shows/{id}", s.handleShowPage)
@@ -106,6 +115,9 @@ func (s *Server) Handler() http.Handler {
 	// TMDB 在线刮削（未配置 TMDB_API_KEY 时返回 503）
 	mux.HandleFunc("GET /api/v1/videos/{id}/scrape", s.handleScrapeSearch)
 	mux.HandleFunc("POST /api/v1/videos/{id}/scrape", s.handleScrapeApply)
+	// 全库批量刮削：POST 启动（202/409/503），GET 轮询进度
+	mux.HandleFunc("POST /api/v1/scrape/bulk", s.handleBulkScrapeStart)
+	mux.HandleFunc("GET /api/v1/scrape/bulk", s.handleBulkScrapeStatus)
 
 	// 播放进度与收藏（仅在启用持久化时可用，否则返回 503）
 	mux.HandleFunc("GET /api/v1/progress", s.handleProgressList)

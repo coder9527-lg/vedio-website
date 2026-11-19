@@ -18,6 +18,10 @@ services:
       TRANSCODE_ENABLED: "true"
       TRANSCODE_MAX: "2"          # 同时转码任务上限，按 NAS CPU 性能调整
       TRANSCODE_IDLE_TIMEOUT: "30m" # 无人观看后多久停止转码进程（分片保留）
+      # 硬件加速转码（Intel 核显 VAAPI）：取消下面两行与底部 devices/group_add 注释后启用；
+      # 宿主机不存在 /dev/dri 时服务会自动回退 CPU 软转并打印警告
+      # TRANSCODE_HWACCEL: "vaapi"
+      # TRANSCODE_VAAPI_DEVICE: "/dev/dri/renderD128"
       # FFMPEG_BIN: "ffmpeg"      # 自定义 ffmpeg 路径
       # FFPROBE_BIN: "ffprobe"    # 自定义 ffprobe 路径（多音轨探测，随 ffmpeg 镜像自带）
       # 访问密码：取消注释并设置即开启登录认证
@@ -31,3 +35,9 @@ services:
       - /volume1/videos:/media:ro
       # 缩略图缓存与运行数据，持久化到宿主机
       - ./data:/data
+    # VAAPI 硬件加速：与上方 TRANSCODE_HWACCEL 一并取消注释。
+    # group_add 中的 render 组 GID 因发行版而异，可在宿主机执行 `getent group render` 查看
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "render"

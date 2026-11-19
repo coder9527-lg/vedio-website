@@ -6,14 +6,15 @@
 
 - 📁 **自动扫描媒体目录**：递归索引挂载目录中的视频文件（支持 mp4/mkv/mov/avi/webm 等常见格式）
 - 👀 **文件监听自动入库**：基于 fsnotify 递归监听，新增/删除/重命名即时增量更新；事件防抖避免拷入半截文件，NAS 晚挂载自动重试，另支持定时全量兜底（NFS/SMB 事件丢失场景）
-- ⏯️ **在线播放 + 进度条拖拽**：基于 HTTP Range 的流式传输，浏览器原生播放器
+- ⏯️ **在线播放 + 进度条拖拽**：基于 HTTP Range 的流式传输，浏览器原生播放器；支持 0.5~2 倍倍速切换、键盘快捷键（空格/K 播放暂停、←→±5 秒、↑↓音量、F 全屏、M 静音）与字幕字号三档调节
+- 🩺 **健康检查端点**：`/healthz` 固定返回 200（认证放行），Dockerfile 内置 `HEALTHCHECK`，群晖 Container Manager / 主流 NAS 容器管理可直接探活
 - 🖼️ **ffmpeg 缩略图**：首次访问按需抽帧并缓存，不阻塞扫描；无 ffmpeg 时自动降级占位图
-- 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖
+- 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖；可选 Intel 核显 VAAPI 硬解硬编（`TRANSCODE_HWACCEL=vaapi`），设备缺失时启动期自动回退 CPU 软转
 - 🔊 **多音轨支持**：ffprobe 自动探测视频中的多路音轨（语言/标题），转码时产出带 `EXT-X-MEDIA` 音频分组的 master 播放列表，播放页可在音轨菜单中切换；单音轨视频保持简单布局不变
 - 💬 **外挂字幕自动挂载**：同目录或 `subs/`/`subtitles/`/`字幕/` 子目录中同名（可带语言/SDH/强制后缀，如 `Movie.zh-CN.srt`、`Movie.en.forced.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端纯 Go 统一转 WebVTT（无需额外进程/磁盘缓存），通过 `<track>` 在原画与转码两种模式下均可切换
 - 📝 **内嵌字幕提取**：转码时自动把视频内封装的文本字幕（SRT/ASS/WebVTT/MOV_TEXT）提取为 WebVTT 并挂进同一个字幕菜单（标注「[内嵌]」）；位图字幕（PGS/DVD-VOBSUB/DVB/XSUB）在安装 tesseract 后经 OCR 识别为 WebVTT，未安装时仅识别不提取、静默降级
 - 🎞️ **NFO 元信息与本地海报**：自动识别 Kodi/Jellyfin 风格的 `movie.nfo` / 同名 `.nfo`（片名、年份、片长、评分、类型、导演、主演、剧情简介等），以及同目录命名约定的海报/背景图（`*-poster.jpg`、`folder.jpg`、`*.fanart.jpg` 等）；首页卡片优先展示海报与正式片名，播放页呈现完整影片资料，NFO/图片增删由文件监听自动刷新，无需重扫
-- 🌐 **TMDB 在线刮削**（可选）：配置 `TMDB_API_KEY` 后在播放页一键搜索 TMDB 候选、人工确认后自动下载海报/背景图并补齐缺失元信息；本地 NFO 优先，结果持久化到缓存目录、重启自动恢复；未配置时功能静默关闭
+- 🌐 **TMDB 在线刮削**（可选）：配置 `TMDB_API_KEY` 后在播放页一键搜索 TMDB 候选、人工确认后自动下载海报/背景图并补齐缺失元信息；本地 NFO 优先，结果持久化到缓存目录、重启自动恢复；未配置时功能静默关闭；首页另提供「批量刮削」，后台自动为全库缺失元信息的视频逐个匹配（300ms 节流、单任务、进度可轮询）
 - 📺 **电视剧/剧集自动分组**：文件名含 `S01E02`、`1x02`、`第1季第2集`、`EP02` 等季集标记的视频自动聚合成剧集，首页折叠为剧集卡片（可按「全部/剧集/电影」筛选），剧集详情页按季列集并标记观看进度，播放页本集结束后 5 秒倒计时自动连播下一集（可取消）；识别不出季集标记的视频始终按电影处理，行为不变；聚合在内存索引中完成，无数据库依赖，文件增删改名即时增量更新
 - 📺 **暗色响应式界面**：桌面/手机自适应，视频卡片墙
 - 🔌 **JSON API**：便于后续接入客户端或自动化
@@ -81,6 +82,8 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `TRANSCODE_DIR` | `/data/transcode` | HLS 分片（m3u8/ts）缓存目录，位于持久化卷内；启动时清空残留 |
 | `TRANSCODE_MAX` | `2` | 同时运行的 ffmpeg 转码任务上限，超出的任务排队，按 NAS CPU 性能调整 |
 | `TRANSCODE_IDLE_TIMEOUT` | `30m` | 会话无人访问后多久停止转码进程（已产出分片保留，再次观看自动重转） |
+| `TRANSCODE_HWACCEL` | 空（软转） | 硬件加速模式，目前支持 `vaapi`（Intel 核显硬解硬编）；留空走 CPU 软转，未知模式或设备不可访问时启动期告警并回退软转 |
+| `TRANSCODE_VAAPI_DEVICE` | `/dev/dri/renderD128` | VAAPI 渲染节点路径；启用硬转时还需在 compose 中映射 `/dev/dri` 并把容器用户加入 `render` 组 |
 | `OCR_ENABLED` | `true` | 是否启用位图字幕 OCR；设为 `false` 关闭，或 tesseract 缺失/无语言包时自动降级（位图字幕仅识别不提取） |
 | `TESSERACT_BIN` | `tesseract` | tesseract OCR 可执行文件路径；需另行安装 tesseract 及所需语言包（如 `chi_sim`、`eng`） |
 | `DB_PATH` | 空（关闭） | SQLite 数据库文件路径（如 `/data/vedio.db`），开启播放进度与收藏；留空禁用持久化，接口返回 503 且页面隐藏相关入口 |
@@ -116,6 +119,8 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | GET | `/api/v1/videos/{id}/metadata` | 刮削元信息（NFO/TMDB 合并结果 + 海报路径，无元信息时 404） |
 | GET | `/api/v1/videos/{id}/scrape` | 用清洗后的文件名搜索 TMDB 候选影片（未配置 Key 时 503） |
 | POST | `/api/v1/videos/{id}/scrape` | 请求体 `{"tmdbId": 555}`，拉取详情、下载图片并与本地 NFO 合并 |
+| POST | `/api/v1/scrape/bulk` | 启动全库批量刮削（仅缺失元信息的视频）：202 已受理、409 已有任务运行（回传进度）、503 刮削未启用 |
+| GET | `/api/v1/scrape/bulk` | 批量刮削进度快照（总数/成功/跳过/失败/当前视频/起止时间） |
 | GET | `/artwork/{id}/poster` · `/artwork/{id}/backdrop` | 本地海报 / 背景图（仅限媒体根目录内的图片，白名单扩展名） |
 | GET | `/api/v1/videos/{id}/transcode` | 启动/查询 HLS 转码会话状态（排队返回 429，前端轮询） |
 | GET | `/hls/{id}/index.m3u8` | HLS 入口播放列表（单音轨返回 index，多音轨返回 master 内容，`no-store`） |
@@ -134,8 +139,9 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | GET | `/api/v1/videos/{id}/playlists` | 该视频所属的播放列表（加入弹窗勾选态） |
 | GET / POST | `/login` | 登录页 / 提交密码（开启认证后） |
 | POST | `/logout` | 退出登录并清除会话 |
+| GET | `/healthz` | 健康检查，固定返回 `{"status":"ok"}`（无需登录，供容器探活/负载均衡） |
 
-> 开启 `AUTH_PASSWORD` 后，除 `/login`、`/static/*`、占位图外的接口均需登录：页面请求 302 跳转登录页，`/api/*` 返回 `401`。
+> 开启 `AUTH_PASSWORD` 后，除 `/login`、`/healthz`、`/static/*`、占位图外的接口均需登录：页面请求 302 跳转登录页，`/api/*` 返回 `401`。`/healthz` 始终放行以便容器探活。
 
 ## 访问密码（可选）
 
@@ -204,6 +210,25 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - **内嵌字幕**：视频内封装的文本字幕（subrip/ASS/WebVTT/MOV_TEXT 等）在转码启动时由 ffmpeg 逐路提取为转码目录下的 `sub-N.vtt`（自动把 `MM:SS.mmm` 规整为标准 `HH:MM:SS.mmm`），与外挂字幕共用播放页「字幕」菜单，名称带「[内嵌]」前缀。
 - **位图字幕 OCR（可选）**：PGS/DVD-VOBSUB/DVB/XSUB 等位图字幕只有图像、没有文本，需要额外安装 [tesseract OCR](https://github.com/tesseract-ocr/tesseract) 及语言包（简体中文 `chi_sim`、英文 `eng` 等，Debian 系为 `tesseract-ocr` 与 `tesseract-ocr-chi-sim`，macOS 为 `brew install tesseract tesseract-lang`）。启用后转码时先用 ffmpeg 把位图字幕解码为带时间戳的 PNG 帧，再由 tesseract 逐帧识别，相邻重复帧自动合并为同一条 WebVTT cue，产出同样的 `sub-N.vtt` 并入字幕菜单；语言按字幕轨标签自动选择（中文优先 `chi_sim`/`chi_tra`，缺语言包回退英文）。未安装 tesseract、缺少语言包或设 `OCR_ENABLED=false` 时静默降级为「仅识别不提取」，转码主流程仍以 `-sn` 丢弃图像流，不影响其他功能。为保持镜像精简，默认镜像不含 tesseract；容器内需要时可基于本镜像自行 `apk add --no-cache tesseract-ocr tesseract-ocr-data-chi_sim`（语言包名随 Alpine 版本略有差异）。
 
+### VAAPI 硬件加速（可选，Intel 核显）
+
+软转在低配 NAS 上会占满 CPU，带 Intel 核显的机型（群晖 x86 Plus 系列、自组 N100/N305 小主机等）可启用 VAAPI 硬解硬编：
+
+```yaml
+environment:
+  TRANSCODE_HWACCEL: "vaapi"
+  TRANSCODE_VAAPI_DEVICE: "/dev/dri/renderD128"   # 可省略，默认即此值
+devices:
+  - /dev/dri:/dev/dri
+group_add:
+  - "render"   # render 组 GID 因发行版而异，宿主机执行 getent group render 查看
+```
+
+- 镜像已内置 `mesa-va-gallium`、`libva`、`intel-media-driver` 驱动，无需额外构建；
+- 启动期对设备节点做一次预检：未映射 `/dev/dri`、节点不可访问或模式未知时打印警告并自动回退 CPU 软转，不会在每个转码会话上反复失败；
+- 硬转使用 `h264_vaapi`（目标码率 4000k，VAAPI 不支持 crf/preset），软转维持 `libx264 -preset veryfast -crf 23`；多音轨、字幕提取等其余链路两种档位完全一致；
+- 不设置 `TRANSCODE_HWACCEL` 时行为与旧版本零差异。NVIDIA NVENC、Intel QSV 本期未实现。
+
 > 转码是 CPU 密集型任务，低配 NAS 建议把 `TRANSCODE_MAX` 设为 `1`，并优先在局域网内使用。
 
 ## 海报与元信息（NFO）
@@ -227,6 +252,16 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - **图片下载**：海报（w500）与背景图（w1280）原子写入 `TMDB_IMAGE_DIR/<视频ID>/`，经 `/artwork/*` 提供（与 NFO 海报同一套扩展名白名单与路径穿越防护，允许根目录为媒体根目录 + 刮削缓存目录）；图片下载失败不阻断文字元信息
 - **持久化**：刮削结果写入缓存目录的 `metadata.json`，重新扫描或进程重启后自动恢复，并与当前 NFO 重新合并；同一视频的刮削请求串行化，避免并发竞态
 - **优雅降级**：未配置 Key、TMDB 不可达、返回错误码时接口分别返回 503/502，页面给出提示，不影响播放与本地刮削；`TMDB_BASE_URL`、`TMDB_IMAGE_BASE_URL` 可指向内网代理或图床镜像
+
+### 批量刮削（全库自动补齐）
+
+单视频人工刮削适合精修，新入库大量视频时可在首页点击「批量刮削」：
+
+- 仅处理当前**没有任何元信息**的视频（已有 NFO 或已刮削的自动跳过），任务启动时快照视频列表，运行期间的增删不影响本次任务；
+- 后端内存单任务模型：同一时刻只允许一个批量任务，重复启动返回 `409` 并回传当前进度；未配置 `TMDB_API_KEY` 时返回 `503`，页面不显示入口；
+- 每个视频自动取 TMDB 搜索的首个候选应用（与手动刮削同一套合并/下载/持久化逻辑），相邻请求间隔 300ms 节流，避免触发 API 速率限制；
+- 单个视频失败只记录错误并继续，无候选计入「跳过」，进度弹窗每秒轮询 `GET /api/v1/scrape/bulk`，展示总数/成功/跳过/失败/当前视频，刷新页面后自动接入进行中的任务；
+- 任务状态仅存内存，进程重启即清空，不会有半截任务残留；任务不会在启动时自动运行，必须手动触发。
 
 > 本地 NFO 与在线 TMDB 复用同一套 `Metadata` 结构、API 与页面展示链路，二者可独立或组合使用。
 
@@ -274,4 +309,7 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - [x] 位图字幕 OCR（PGS/DVD/DVB/XSUB 经可选的 tesseract 识别为 WebVTT，缺失时静默降级，见 `OCR_ENABLED`/`TESSERACT_BIN`）
 - [x] 海报/元信息刮削：本地 NFO（Kodi/Jellyfin 兼容）+ 海报/背景图命名约定，文件监听自动刷新（见「海报与元信息（NFO）」）
 - [x] 在线刮削（TMDB v3，纯标准库实现，候选人工确认，与 NFO 合并并持久化，见「在线刮削（TMDB）」）
+- [x] 全库批量刮削（内存单任务、300ms 节流、进度轮询，见「批量刮削」）
+- [x] VAAPI 硬件加速转码（Intel 核显，设备缺失自动回退软转，见「VAAPI 硬件加速」）
+- [x] 播放器增强（倍速、键盘快捷键、字幕字号）与 `/healthz` 容器健康检查
 - [x] 电视剧/剧集分组（SxxEyy/1xx/中文季集/EP 命名解析、首页折叠、详情页按季列集、播放页自动连播，见「电视剧/剧集分组」）

@@ -11,6 +11,9 @@
     <h1>🎬 {{.Title}}</h1>
     <div class="header-actions">
       <span class="count">共 {{.Total}} 个视频</span>
+      {{if .ScrapeOn}}
+      <button id="bulk-scrape-btn" type="button" class="btn-secondary">批量刮削</button>
+      {{end}}
       <button id="rescan-btn" type="button">重新扫描</button>
       {{if .AuthEnabled}}
       <form method="post" action="/logout" class="inline-form">
@@ -210,6 +213,24 @@
   </div>
   {{end}}
 
+  {{if .ScrapeOn}}
+  <!-- 批量刮削进度：启动后每秒轮询 /api/v1/scrape/bulk -->
+  <div class="scrape-modal pl-modal" id="bulk-scrape-modal" hidden>
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-scrape-title">
+      <div class="scrape-dialog-head">
+        <h3 id="bulk-scrape-title">批量刮削</h3>
+        <button type="button" class="scrape-close" id="bulk-scrape-close" aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <p class="pl-hint" id="bulk-scrape-summary">准备中…</p>
+        <div class="bulk-progress-bar"><div class="bulk-progress-inner" id="bulk-progress-inner"></div></div>
+        <p class="pl-hint" id="bulk-scrape-detail"></p>
+        <p class="pl-hint bulk-scrape-err" id="bulk-scrape-err" hidden></p>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
   <footer class="site-footer">
     <span>vedio-website · Go + Docker · NAS 视频站</span>
   </footer>
@@ -232,6 +253,95 @@
         btn.textContent = '重新扫描';
       }
     });
+
+    // ---------- TMDB 批量刮削（仅启用在线刮削时渲染该段逻辑）----------
+    {{if .ScrapeOn}}
+    (() => {
+      const btn = document.getElementById('bulk-scrape-btn');
+      const modal = document.getElementById('bulk-scrape-modal');
+      const summary = document.getElementById('bulk-scrape-summary');
+      const detail = document.getElementById('bulk-scrape-detail');
+      const errBox = document.getElementById('bulk-scrape-err');
+      const inner = document.getElementById('bulk-progress-inner');
+      let pollTimer = null;
+
+      function openModal() { modal.hidden = false; document.body.style.overflow = 'hidden'; }
+      function closeModal() {
+        modal.hidden = true;
+        document.body.style.overflow = '';
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      }
+      document.getElementById('bulk-scrape-close').addEventListener('click', closeModal);
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+      function render(st) {
+        const pct = st.total > 0 ? Math.round((st.done / st.total) * 100) : 0;
+        inner.style.width = pct + '%';
+        summary.textContent = st.running
+          ? '正在刮削… 进度 ' + st.done + ' / ' + st.total + '（' + pct + '%）'
+          : '批量刮削完成：共 ' + st.total + ' 个，成功 ' + st.success +
+            '，跳过 ' + st.skipped + '，失败 ' + st.failed;
+        detail.textContent = st.current ? ('当前：' + st.current) : '';
+        if (st.lastError) { errBox.hidden = false; errBox.textContent = '最近错误：' + st.lastError; }
+        else { errBox.hidden = true; }
+      }
+
+      function startPolling() {
+        if (pollTimer) return;
+        pollTimer = setInterval(async () => {
+          try {
+            const res = await fetch('/api/v1/scrape/bulk');
+            if (res.status === 401) { location.href = '/login'; return; }
+            const st = await res.json();
+            render(st);
+            if (!st.running) {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              btn.disabled = false;
+              btn.textContent = '批量刮削';
+            }
+          } catch (err) {
+            // 单次轮询失败不打断，下一秒继续
+          }
+        }, 1000);
+      }
+
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '启动中...';
+        try {
+          const res = await fetch('/api/v1/scrape/bulk', { method: 'POST' });
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (res.status === 503) { alert('在线刮削未启用（未配置 TMDB_API_KEY）'); return; }
+          const st = await res.json();
+          openModal();
+          render(st);
+          if (st.running) {
+            startPolling();
+          } else {
+            // 202 之外的边界：任务瞬间结束（如没有缺失元信息的视频）
+            btn.disabled = false;
+            btn.textContent = '批量刮削';
+          }
+        } catch (err) {
+          alert('启动批量刮削失败: ' + err);
+        } finally {
+          if (!pollTimer) { btn.disabled = false; btn.textContent = '批量刮削'; }
+        }
+      });
+
+      // 页面加载时若服务端已有任务在跑（如刷新页面），自动接入进度
+      fetch('/api/v1/scrape/bulk').then((r) => r.ok ? r.json() : null).then((st) => {
+        if (st && st.running) {
+          btn.disabled = true;
+          btn.textContent = '刮削中...';
+          openModal();
+          render(st);
+          startPolling();
+        }
+      }).catch(() => {});
+    })();
+    {{end}}
 
     // 卡片上的收藏切换
     document.querySelectorAll('.fav-toggle').forEach((btn) => {
