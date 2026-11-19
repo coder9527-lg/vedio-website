@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coder9527-lg/vedio-website/internal/media"
+	"github.com/coder9527-lg/vedio-website/internal/store"
 )
 
 // ---------- 页面 ----------
@@ -27,17 +28,18 @@ var allowedSorts = map[string]bool{
 
 type indexData struct {
 	basePage
-	Videos   []*media.Video
-	Cards    []homeCard                 // 首页卡片：默认视图下剧集成员折叠为剧集卡片
-	Metadata map[string]*media.Metadata // 视频 ID → 元信息（无元信息的视频不在 map 中）
-	Count    int                        // 当前视图下的视频数
-	Total    int                        // 媒体库视频总数
-	State    videoState
-	Query    string // 搜索关键字
-	Sort     string // 当前排序
-	View     string // all | favorites | continue
-	Type     string // all | movie | show
-	StoreOn  bool   // 是否启用持久化
+	Videos    []*media.Video
+	Cards     []homeCard                 // 首页卡片：默认视图下剧集成员折叠为剧集卡片
+	Metadata  map[string]*media.Metadata // 视频 ID → 元信息（无元信息的视频不在 map 中）
+	Count     int                        // 当前视图下的视频数
+	Total     int                        // 媒体库视频总数
+	State     videoState
+	Query     string                  // 搜索关键字
+	Sort      string                  // 当前排序
+	View      string                  // all | favorites | continue | playlists
+	Type      string                  // all | movie | show
+	StoreOn   bool                    // 是否启用持久化
+	Playlists []store.PlaylistSummary // view=playlists 时的列表摘要
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +54,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		sortVal = ""
 	}
 	view := q.Get("view")
-	if view != "favorites" && view != "continue" {
+	if view != "favorites" && view != "continue" && view != "playlists" {
 		view = "all"
 	}
 	typeFilter := normalizeTypeFilter(q.Get("type"))
@@ -60,6 +62,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	query := media.Query{Keyword: keyword, Sort: sortVal}
 	state := s.loadVideoState()
 	switch view {
+	case "playlists":
+		// 播放列表视图不按视频卡片过滤，忽略 type/q/sort，模板渲染专属面板
+		query.IDs = nil
 	case "favorites":
 		if len(state.Favs) == 0 {
 			query.IDs = map[string]bool{} // 强制空结果
@@ -81,19 +86,25 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			metaMap[v.ID] = md
 		}
 	}
+	// 仅播放列表视图需要摘要数据，出错时留空由模板显示空态
+	var playlists []store.PlaylistSummary
+	if view == "playlists" {
+		playlists, _ = s.store.ListPlaylists()
+	}
 	s.render(w, "index.html", indexData{
-		basePage: basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
-		Videos:   videos,
-		Cards:    s.buildHomeCards(videos, typeFilter),
-		Metadata: metaMap,
-		Count:    len(videos),
-		Total:    s.library.Len(),
-		State:    state,
-		Query:    keyword,
-		Sort:     sortVal,
-		View:     view,
-		Type:     typeFilter,
-		StoreOn:  s.storeEnabled(),
+		basePage:  basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
+		Videos:    videos,
+		Cards:     s.buildHomeCards(videos, typeFilter),
+		Metadata:  metaMap,
+		Count:     len(videos),
+		Total:     s.library.Len(),
+		State:     state,
+		Query:     keyword,
+		Sort:      sortVal,
+		View:      view,
+		Type:      typeFilter,
+		StoreOn:   s.storeEnabled(),
+		Playlists: playlists,
 	})
 }
 
@@ -112,11 +123,44 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	if md == nil {
 		md = &media.Metadata{}
 	}
-	// 剧集成员：带上所属剧集 ID 与下一集，供播放页自动连播
+	// 剧集成员：带上所属剧集 ID 与下一集（下一集作为无播放列表上下文时的连播回填）
 	showID, _ := s.library.ShowIDOf(v.ID)
 	var nextVideo *media.Video
 	if showID != "" {
 		nextVideo, _ = s.library.NextEpisode(v.ID)
+	}
+
+	// 连播决策由 handler 统一输出 AutoNext 三字段，模板无需分支：
+	// 1. 合法 playlist 且当前视频在列表中：列表连播绝对优先，末项停止不回退
+	// 2. 无/非法/已删 playlist（静默忽略）：剧集成员回填 NextEpisode，电影无卡片
+	var (
+		playlistID   string
+		autoNextURL  string
+		autoNextName string
+	)
+	if pid := r.URL.Query().Get("playlist"); pid != "" && s.storeEnabled() {
+		if pl, err := s.store.GetPlaylist(pid); err == nil && pl != nil {
+			found := false
+			for _, it := range pl.Items {
+				if !found {
+					if it.VideoID == v.ID {
+						found = true
+					}
+					continue
+				}
+				// 按 sort_order 找当前条目之后的第一个有效视频，连续跳过悬空 ID
+				if nv, ok := s.library.Get(it.VideoID); ok {
+					playlistID = pid
+					autoNextURL = "/watch/" + nv.ID + "?playlist=" + pid
+					autoNextName = nv.Name
+					break
+				}
+			}
+		}
+	}
+	if autoNextURL == "" && nextVideo != nil {
+		autoNextURL = "/watch/" + nextVideo.ID
+		autoNextName = nextVideo.Name
 	}
 	s.render(w, "watch.html", struct {
 		basePage
@@ -129,7 +173,9 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		NativePlayable bool
 		Subtitles      []*media.Subtitle
 		ShowID         string
-		NextVideo      *media.Video
+		PlaylistID     string
+		AutoNextURL    string
+		AutoNextName   string
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
@@ -141,7 +187,9 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		NativePlayable: isNativePlayable(v.Ext),
 		Subtitles:      subtitles,
 		ShowID:         showID,
-		NextVideo:      nextVideo,
+		PlaylistID:     playlistID,
+		AutoNextURL:    autoNextURL,
+		AutoNextName:   autoNextName,
 	})
 }
 

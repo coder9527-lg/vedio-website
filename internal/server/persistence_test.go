@@ -206,6 +206,17 @@ func TestPersistenceDisabledReturns503(t *testing.T) {
 		{http.MethodGet, "/api/v1/favorites"},
 		{http.MethodPut, "/api/v1/videos/x/progress"},
 		{http.MethodPost, "/api/v1/videos/x/favorite"},
+		// 播放列表 10 条路由在持久化关闭时同样应 503
+		{http.MethodGet, "/api/v1/playlists"},
+		{http.MethodPost, "/api/v1/playlists"},
+		{http.MethodGet, "/api/v1/playlists/x"},
+		{http.MethodPatch, "/api/v1/playlists/x"},
+		{http.MethodDelete, "/api/v1/playlists/x"},
+		{http.MethodPost, "/api/v1/playlists/x/items"},
+		{http.MethodDelete, "/api/v1/playlists/x/items/y"},
+		{http.MethodPost, "/api/v1/playlists/x/items/y/move"},
+		{http.MethodPost, "/api/v1/shows/x/playlist"},
+		{http.MethodGet, "/api/v1/videos/x/playlists"},
 	} {
 		status, _ := doJSON(t, ts, c.method, c.path, map[string]any{})
 		if status != http.StatusServiceUnavailable {
@@ -226,6 +237,17 @@ func TestRescanPrunesOrphanRecords(t *testing.T) {
 	if err := srv.store.SetFavorite("ghost", true); err != nil {
 		t.Fatalf("写入孤儿收藏失败: %v", err)
 	}
+	// 播放列表：真实视频 + 悬空 ghost 各占一个条目，表头本身应保留
+	pl, err := srv.store.CreatePlaylist("重扫测试")
+	if err != nil {
+		t.Fatalf("创建播放列表失败: %v", err)
+	}
+	if _, err := srv.store.AddPlaylistItem(pl.ID, id); err != nil {
+		t.Fatalf("加入真实视频失败: %v", err)
+	}
+	if _, err := srv.store.AddPlaylistItem(pl.ID, "ghost"); err != nil {
+		t.Fatalf("加入悬空视频失败: %v", err)
+	}
 
 	// 触发重扫，应清掉 ghost、保留真实视频
 	status, _ := doJSON(t, ts, http.MethodPost, "/api/v1/rescan", nil)
@@ -240,5 +262,17 @@ func TestRescanPrunesOrphanRecords(t *testing.T) {
 	}
 	if p, _ := srv.store.GetProgress(id); p == nil {
 		t.Fatal("真实视频的进度应保留")
+	}
+
+	// 播放列表：悬空条目被清理，真实条目与列表表头保留
+	after, err := srv.store.GetPlaylist(pl.ID)
+	if err != nil {
+		t.Fatalf("重扫后列表表头应保留: %v", err)
+	}
+	if after == nil {
+		t.Fatal("重扫后播放列表不应被删除")
+	}
+	if len(after.Items) != 1 || after.Items[0].VideoID != id {
+		t.Fatalf("重扫后应只剩真实视频条目，实际 %+v", after.Items)
 	}
 }

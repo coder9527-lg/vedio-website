@@ -16,6 +16,8 @@
               data-fav="{{if index .State.Favs .Video.ID}}true{{else}}false{{end}}">
         {{if index .State.Favs .Video.ID}}⭐ 已收藏{{else}}☆ 收藏{{end}}
       </button>
+      <button type="button" class="btn-secondary pl-entry-btn" id="pl-watch-add"
+              data-video-id="{{.Video.ID}}">＋ 清单</button>
       {{end}}
       {{if .AuthEnabled}}
       <form method="post" action="/logout" class="inline-form">
@@ -633,11 +635,11 @@
   </script>
   {{end}}
 
-  {{if .NextVideo}}
+  {{if .AutoNextURL}}
   <div id="auto-next" class="auto-next" hidden data-auto-next>
     <div class="auto-next-card">
       <p class="auto-next-title">本集播放完毕</p>
-      <p class="auto-next-desc"><span id="auto-next-count">5</span> 秒后自动播放下一集：{{.NextVideo.Name}}</p>
+      <p class="auto-next-desc"><span id="auto-next-count">5</span> 秒后自动播放下一个：{{.AutoNextName}}</p>
       <div class="auto-next-actions">
         <button type="button" id="auto-next-go" class="btn-primary">立即播放</button>
         <button type="button" id="auto-next-cancel" class="btn-secondary">取消连播</button>
@@ -646,7 +648,7 @@
   </div>
   <script>
     (() => {
-      const nextURL = '/watch/' + {{printf "%q" .NextVideo.ID}};
+      const nextURL = {{printf "%q" .AutoNextURL}};
       const player = document.getElementById('player');
       const box = document.getElementById('auto-next');
       const countEl = document.getElementById('auto-next-count');
@@ -689,6 +691,124 @@
   {{end}}
   {{if .ShowID}}
   <a class="back-to-show" href="/shows/{{.ShowID}}">← 返回剧集详情</a>
+  {{end}}
+
+  {{if .StoreOn}}
+  <!-- 加入播放列表选择弹窗 -->
+  <div class="scrape-modal pl-modal" id="pl-add-modal" hidden>
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="pl-add-title">
+      <div class="scrape-dialog-head">
+        <h3 id="pl-add-title">加入播放列表</h3>
+        <button type="button" class="scrape-close" data-pl-close aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <div class="pl-pick-list" id="pl-pick-list"></div>
+        <div class="pl-create-inline">
+          <input type="text" class="pl-rename-input" id="pl-new-name" maxlength="100" placeholder="新列表名称…" aria-label="新列表名称">
+          <button type="button" id="pl-create-join-btn">新建并加入</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const modal = document.getElementById('pl-add-modal');
+      const pickList = document.getElementById('pl-pick-list');
+      const newName = document.getElementById('pl-new-name');
+      const videoId = {{printf "%q" .Video.ID}};
+      let opened = false;
+
+      async function plFetch(url, options) {
+        const res = await fetch(url, options);
+        if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+        if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); throw new Error('503'); }
+        if (!res.ok) {
+          let msg = 'HTTP ' + res.status;
+          try { const d = await res.json(); if (d.error) msg = d.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        return res.json();
+      }
+      function closeModal() { modal.hidden = true; document.body.style.overflow = ''; }
+      document.querySelectorAll('[data-pl-close]').forEach((b) => b.addEventListener('click', closeModal));
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+      async function renderPick() {
+        pickList.textContent = '加载中…';
+        const [all, mine] = await Promise.all([
+          plFetch('/api/v1/playlists'),
+          plFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/playlists')
+        ]);
+        pickList.textContent = '';
+        const playlists = all.playlists || [];
+        if (!playlists.length) {
+          const p = document.createElement('p');
+          p.className = 'pl-hint';
+          p.textContent = '还没有播放列表，请在下方新建。';
+          pickList.appendChild(p);
+          return;
+        }
+        const memberIds = new Set((mine.playlists || []).map((m) => m.id));
+        playlists.forEach((pl) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'pl-pick-row';
+          const label = document.createElement('span');
+          label.className = 'pl-pick-name';
+          label.textContent = pl.name + '（' + pl.itemCount + '）';
+          const status = document.createElement('span');
+          status.className = 'pl-pick-status';
+          status.textContent = memberIds.has(pl.id) ? '✓ 已在列表' : '加入';
+          row.append(label, status);
+          row.addEventListener('click', async () => {
+            row.disabled = true;
+            try {
+              const resp = await plFetch('/api/v1/playlists/' + encodeURIComponent(pl.id) + '/items', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ videoId })
+              });
+              status.textContent = resp.added ? '✓ 已加入（新增 1）' : '✓ 已在列表';
+            } catch (err) {
+              alert('加入失败: ' + err.message);
+              row.disabled = false;
+            }
+          });
+          pickList.appendChild(row);
+        });
+      }
+
+      document.getElementById('pl-watch-add').addEventListener('click', () => {
+        modal.hidden = false;
+        document.body.style.overflow = 'hidden';
+        if (!opened) { opened = true; renderPick().catch((err) => {
+          if (err.message !== '未登录' && err.message !== '503') pickList.textContent = '加载失败: ' + err.message;
+        }); }
+      });
+
+      document.getElementById('pl-create-join-btn').addEventListener('click', async () => {
+        const name = newName.value.trim();
+        if (!name) { alert('请输入列表名称'); return; }
+        try {
+          const created = await plFetch('/api/v1/playlists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+          });
+          await plFetch('/api/v1/playlists/' + encodeURIComponent(created.playlist.id) + '/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId })
+          });
+          closeModal();
+          alert('已新建并加入「' + created.playlist.name + '」');
+        } catch (err) {
+          alert('创建失败: ' + err.message);
+        }
+      });
+    })();
+  </script>
   {{end}}
 </body>
 </html>

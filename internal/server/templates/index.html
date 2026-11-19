@@ -50,7 +50,38 @@
       <a href="/?type={{.Type}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "all"}}active{{end}}">全部</a>
       <a href="/?type={{.Type}}&view=continue&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "continue"}}active{{end}}">继续观看</a>
       <a href="/?type={{.Type}}&view=favorites&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "favorites"}}active{{end}}">⭐ 收藏</a>
+      <a href="/?view=playlists" class="tab {{if eq .View "playlists"}}active{{end}}">📂 播放列表</a>
     </nav>
+    {{end}}
+
+    {{if and .StoreOn (eq .View "playlists")}}
+    <section class="pl-panel">
+      <div class="pl-panel-head">
+        <h2 class="pl-panel-title">我的播放列表</h2>
+        <button type="button" class="pl-create-btn" id="pl-create-top">＋ 新建播放列表</button>
+      </div>
+      {{if .Playlists}}
+      <div class="pl-grid">
+        {{range .Playlists}}
+        <div class="pl-card" data-pid="{{.ID}}" tabindex="0" role="button" aria-label="管理播放列表 {{.Name}}">
+          <div class="pl-card-body">
+            <h3 class="pl-card-name" title="{{.Name}}">{{.Name}}</h3>
+            <p class="pl-card-meta">{{.ItemCount}} 个视频 · 更新于 {{.UpdatedAt.Format "2006-01-02 15:04"}}</p>
+          </div>
+          <div class="pl-card-actions">
+            <button type="button" class="btn-secondary pl-play-all" data-pid="{{.ID}}">▶ 播放全部</button>
+            <button type="button" class="btn-secondary pl-manage-btn" data-pid="{{.ID}}">管理</button>
+          </div>
+        </div>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="empty">
+        <p>还没有播放列表。</p>
+        <p class="hint">点击「＋ 新建播放列表」创建合集，把跨目录的电影和剧集单集聚合到一起。</p>
+      </div>
+      {{end}}
+    </section>
     {{end}}
 
     {{if .Cards}}
@@ -116,6 +147,8 @@
                 data-id="{{$v.ID}}" data-fav="{{if index $.State.Favs $v.ID}}true{{else}}false{{end}}"
                 title="{{if index $.State.Favs $v.ID}}取消收藏{{else}}收藏{{end}}"
                 aria-label="收藏切换">☆</button>
+        <button type="button" class="pl-add-btn" data-video-id="{{$v.ID}}"
+                title="加入播放列表" aria-label="加入播放列表">＋</button>
         {{end}}
       </div>
       {{end}}
@@ -138,6 +171,44 @@
     </div>
     {{end}}
   </main>
+
+  {{if .StoreOn}}
+  <!-- Modal A：播放列表管理 -->
+  <div class="scrape-modal pl-modal" id="pl-manage-modal" hidden>
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="pl-manage-title">
+      <div class="scrape-dialog-head">
+        <h3 id="pl-manage-title">管理播放列表</h3>
+        <button type="button" class="scrape-close" data-pl-close aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <div class="pl-manage-toolbar">
+          <input type="text" class="pl-rename-input" id="pl-rename-input" maxlength="100" aria-label="列表名称">
+          <button type="button" class="btn-secondary" id="pl-rename-btn">重命名</button>
+          <button type="button" class="btn-danger pl-delete-btn" id="pl-delete-btn">删除列表</button>
+        </div>
+        <p class="pl-hint" id="pl-manage-hint"></p>
+        <div class="pl-item-list" id="pl-item-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal B：加入播放列表选择 -->
+  <div class="scrape-modal pl-modal" id="pl-add-modal" hidden>
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="pl-add-title">
+      <div class="scrape-dialog-head">
+        <h3 id="pl-add-title">加入播放列表</h3>
+        <button type="button" class="scrape-close" data-pl-close aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <div class="pl-pick-list" id="pl-pick-list"></div>
+        <div class="pl-create-inline">
+          <input type="text" class="pl-rename-input" id="pl-new-name" maxlength="100" placeholder="新列表名称…" aria-label="新列表名称">
+          <button type="button" id="pl-create-join-btn">新建并加入</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{end}}
 
   <footer class="site-footer">
     <span>vedio-website · Go + Docker · NAS 视频站</span>
@@ -188,6 +259,335 @@
         }
       });
     });
+
+    // ---------- 播放列表（仅启用持久化时渲染该段逻辑）----------
+    {{if .StoreOn}}
+    const plManageModal = document.getElementById('pl-manage-modal');
+    const plAddModal = document.getElementById('pl-add-modal');
+    const plItemList = document.getElementById('pl-item-list');
+    const plManageHint = document.getElementById('pl-manage-hint');
+    const plRenameInput = document.getElementById('pl-rename-input');
+    const plPickList = document.getElementById('pl-pick-list');
+    const plNewName = document.getElementById('pl-new-name');
+    // 管理弹窗当前列表；加入弹窗的目标上下文（单视频或整剧）
+    let plCurrentPid = null;
+    let plAddTarget = null;
+
+    async function plFetch(url, options) {
+      const res = await fetch(url, options);
+      if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+      if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); throw new Error('503'); }
+      if (!res.ok) {
+        let msg = 'HTTP ' + res.status;
+        try { const d = await res.json(); if (d.error) msg = d.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      return res.json();
+    }
+
+    function plOpen(modal) { modal.hidden = false; document.body.style.overflow = 'hidden'; }
+    function plCloseAll() {
+      if (plManageModal) plManageModal.hidden = true;
+      if (plAddModal) plAddModal.hidden = true;
+      document.body.style.overflow = '';
+    }
+    document.querySelectorAll('[data-pl-close]').forEach((b) => b.addEventListener('click', plCloseAll));
+    document.querySelectorAll('.pl-modal').forEach((m) => {
+      m.addEventListener('click', (e) => { if (e.target === m) plCloseAll(); });
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') plCloseAll(); });
+
+    function plThumbHTML(videoId) {
+      return '<img class="pl-item-thumb" src="/thumb/' + encodeURIComponent(videoId) + '" alt="" loading="lazy">';
+    }
+    function plDisplayName(item) {
+      const v = item.video;
+      if (v && v.name) return v.name;
+      return item.videoId;
+    }
+
+    // ----- 新建列表 -----
+    async function plCreatePlaylist(name) {
+      const data = await plFetch('/api/v1/playlists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      return data.playlist;
+    }
+
+    async function plPromptCreate() {
+      const name = prompt('新播放列表名称：');
+      if (name === null) return;
+      try {
+        await plCreatePlaylist(name.trim());
+        location.reload();
+      } catch (err) {
+        alert('创建失败: ' + err.message);
+      }
+    }
+    document.getElementById('pl-create-top')?.addEventListener('click', plPromptCreate);
+
+    // ----- Modal A：管理 -----
+    async function plOpenManage(pid) {
+      plCurrentPid = pid;
+      plItemList.textContent = '加载中…';
+      plManageHint.textContent = '';
+      plOpen(plManageModal);
+      try {
+        const data = await plFetch('/api/v1/playlists/' + encodeURIComponent(pid));
+        plRenameInput.value = data.playlist.name;
+        plRenderItems(data.items);
+      } catch (err) {
+        plItemList.textContent = '加载失败: ' + err.message;
+      }
+    }
+
+    function plRenderItems(items) {
+      plItemList.textContent = '';
+      if (!items.length) {
+        const p = document.createElement('p');
+        p.className = 'pl-hint';
+        p.textContent = '列表还是空的，去视频卡片上点「＋」加入吧。';
+        plItemList.appendChild(p);
+        return;
+      }
+      items.forEach((item, idx) => {
+        const row = document.createElement('div');
+        row.className = 'pl-item-row';
+        row.dataset.videoId = item.videoId;
+
+        const link = document.createElement('a');
+        link.className = 'pl-item-main';
+        link.href = '/watch/' + encodeURIComponent(item.videoId) + '?playlist=' + encodeURIComponent(plCurrentPid);
+        link.innerHTML = plThumbHTML(item.videoId);
+        const name = document.createElement('span');
+        name.className = 'pl-item-name';
+        name.textContent = (idx + 1) + '. ' + plDisplayName(item);
+        link.appendChild(name);
+        row.appendChild(link);
+
+        const ctrls = document.createElement('div');
+        ctrls.className = 'pl-item-ctrl';
+        const up = document.createElement('button');
+        up.type = 'button';
+        up.className = 'btn-secondary pl-ctrl-btn';
+        up.textContent = '↑';
+        up.title = '上移';
+        up.disabled = idx === 0;
+        up.addEventListener('click', () => plMoveItem(item.videoId, 'up'));
+        const down = document.createElement('button');
+        down.type = 'button';
+        down.className = 'btn-secondary pl-ctrl-btn';
+        down.textContent = '↓';
+        down.title = '下移';
+        down.disabled = idx === items.length - 1;
+        down.addEventListener('click', () => plMoveItem(item.videoId, 'down'));
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'btn-secondary pl-ctrl-btn pl-remove-btn';
+        del.textContent = '移除';
+        del.addEventListener('click', () => plRemoveItem(item.videoId));
+        ctrls.append(up, down, del);
+        row.appendChild(ctrls);
+        plItemList.appendChild(row);
+      });
+    }
+
+    async function plMoveItem(videoId, direction) {
+      try {
+        await plFetch('/api/v1/playlists/' + encodeURIComponent(plCurrentPid) +
+          '/items/' + encodeURIComponent(videoId) + '/move', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ direction })
+        });
+        // 重新拉详情刷新排序，同时保留视频名称/缩略图
+        const detail = await plFetch('/api/v1/playlists/' + encodeURIComponent(plCurrentPid));
+        plRenderItems(detail.items);
+      } catch (err) {
+        alert('移动失败: ' + err.message);
+      }
+    }
+
+    async function plRemoveItem(videoId) {
+      try {
+        await plFetch('/api/v1/playlists/' + encodeURIComponent(plCurrentPid) +
+          '/items/' + encodeURIComponent(videoId), { method: 'DELETE' });
+        const detail = await plFetch('/api/v1/playlists/' + encodeURIComponent(plCurrentPid));
+        plRenderItems(detail.items);
+      } catch (err) {
+        alert('移除失败: ' + err.message);
+      }
+    }
+
+    document.getElementById('pl-rename-btn')?.addEventListener('click', async () => {
+      const name = plRenameInput.value.trim();
+      if (!name) { alert('名称不能为空'); return; }
+      try {
+        await plFetch('/api/v1/playlists/' + encodeURIComponent(plCurrentPid), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        plManageHint.textContent = '已重命名 ✓';
+        setTimeout(() => location.reload(), 600);
+      } catch (err) {
+        alert('重命名失败: ' + err.message);
+      }
+    });
+
+    document.getElementById('pl-delete-btn')?.addEventListener('click', async () => {
+      if (!confirm('确定删除该播放列表？列表内视频文件不会被删除。')) return;
+      try {
+        await plFetch('/api/v1/playlists/' + encodeURIComponent(plCurrentPid), { method: 'DELETE' });
+        plCloseAll();
+        location.reload();
+      } catch (err) {
+        alert('删除失败: ' + err.message);
+      }
+    });
+
+    // 摘要卡片：事件委托，点卡片或「管理」均打开管理弹窗
+    document.querySelectorAll('.pl-grid').forEach((grid) => {
+      grid.addEventListener('click', (e) => {
+        const playBtn = e.target.closest('.pl-play-all');
+        if (playBtn) return; // 播放全部有独立监听
+        const card = e.target.closest('.pl-card');
+        if (card) plOpenManage(card.dataset.pid);
+      });
+      grid.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const card = e.target.closest('.pl-card');
+        if (card) { e.preventDefault(); plOpenManage(card.dataset.pid); }
+      });
+    });
+
+    // 播放全部：取详情后跳到第一个有效条目，贯穿 playlist 参数
+    document.querySelectorAll('.pl-play-all').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const pid = btn.dataset.pid;
+        try {
+          const data = await plFetch('/api/v1/playlists/' + encodeURIComponent(pid));
+          if (!data.items.length) { alert('列表是空的'); return; }
+          location.href = '/watch/' + encodeURIComponent(data.items[0].videoId) +
+            '?playlist=' + encodeURIComponent(pid);
+        } catch (err) {
+          alert('打开失败: ' + err.message);
+        }
+      });
+    });
+
+    // ----- Modal B：加入列表 -----
+    // target: {kind:'video', videoId} 或 {kind:'show', showId}
+    function plOpenAdd(target) {
+      plAddTarget = target;
+      plPickList.textContent = '加载中…';
+      plNewName.value = '';
+      plOpen(plAddModal);
+      Promise.all([
+        plFetch('/api/v1/playlists'),
+        target.kind === 'video'
+          ? plFetch('/api/v1/videos/' + encodeURIComponent(target.videoId) + '/playlists')
+          : Promise.resolve({ playlists: [] })
+      ]).then(([all, mine]) => {
+        plRenderPick(all.playlists || [], mine.playlists || []);
+      }).catch((err) => {
+        if (err.message !== '未登录' && err.message !== '503') {
+          plPickList.textContent = '加载失败: ' + err.message;
+        }
+      });
+    }
+
+    function plRenderPick(playlists, members) {
+      plPickList.textContent = '';
+      if (!playlists.length) {
+        const p = document.createElement('p');
+        p.className = 'pl-hint';
+        p.textContent = '还没有播放列表，请在下方新建。';
+        plPickList.appendChild(p);
+        return;
+      }
+      const memberIds = new Set(members.map((m) => m.id));
+      playlists.forEach((pl) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'pl-pick-row';
+        const label = document.createElement('span');
+        label.className = 'pl-pick-name';
+        label.textContent = pl.name + '（' + pl.itemCount + '）';
+        const status = document.createElement('span');
+        status.className = 'pl-pick-status';
+        const joined = memberIds.has(pl.id);
+        status.textContent = joined ? '✓ 已在列表' : '加入';
+        row.append(label, status);
+        row.addEventListener('click', () => plJoin(pl.id, row, status));
+        plPickList.appendChild(row);
+      });
+    }
+
+    async function plJoin(pid, row, statusEl) {
+      if (!plAddTarget) return;
+      row.disabled = true;
+      try {
+        let resp;
+        if (plAddTarget.kind === 'video') {
+          resp = await plFetch('/api/v1/playlists/' + encodeURIComponent(pid) + '/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId: plAddTarget.videoId })
+          });
+          statusEl.textContent = resp.added ? '✓ 已加入（新增 1）' : '✓ 已在列表';
+        } else {
+          resp = await plFetch('/api/v1/shows/' + encodeURIComponent(plAddTarget.showId) + '/playlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playlistId: pid })
+          });
+          statusEl.textContent = '✓ 已加入（新增 ' + resp.added + '，跳过 ' + resp.skipped + '）';
+        }
+      } catch (err) {
+        alert('加入失败: ' + err.message);
+        row.disabled = false;
+      }
+    }
+
+    document.getElementById('pl-create-join-btn')?.addEventListener('click', async () => {
+      const name = plNewName.value.trim();
+      if (!name) { alert('请输入列表名称'); return; }
+      try {
+        const pl = await plCreatePlaylist(name);
+        // 新建后立即把当前目标加入，不弹第三个窗
+        if (plAddTarget.kind === 'video') {
+          await plFetch('/api/v1/playlists/' + encodeURIComponent(pl.id) + '/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId: plAddTarget.videoId })
+          });
+        } else {
+          await plFetch('/api/v1/shows/' + encodeURIComponent(plAddTarget.showId) + '/playlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playlistId: pl.id })
+          });
+        }
+        plCloseAll();
+        alert('已新建并加入「' + pl.name + '」');
+      } catch (err) {
+        alert('创建失败: ' + err.message);
+      }
+    });
+
+    // 电影卡片上的「＋ 清单」
+    document.querySelectorAll('.pl-add-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        plOpenAdd({ kind: 'video', videoId: btn.dataset.videoId });
+      });
+    });
+    {{end}}
   </script>
 </body>
 </html>

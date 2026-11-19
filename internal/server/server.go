@@ -115,6 +115,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/favorites", s.handleFavoriteList)
 	mux.HandleFunc("POST /api/v1/videos/{id}/favorite", s.handleFavoriteSet)
 	mux.HandleFunc("GET /api/v1/videos/{id}/favorite", s.handleFavoriteGet)
+
+	// 播放列表/合集（仅在启用持久化时可用，否则返回 503）
+	mux.HandleFunc("GET /api/v1/playlists", s.handlePlaylistList)
+	mux.HandleFunc("POST /api/v1/playlists", s.handlePlaylistCreate)
+	mux.HandleFunc("GET /api/v1/playlists/{id}", s.handlePlaylistGet)
+	mux.HandleFunc("PATCH /api/v1/playlists/{id}", s.handlePlaylistRename)
+	mux.HandleFunc("DELETE /api/v1/playlists/{id}", s.handlePlaylistDelete)
+	mux.HandleFunc("POST /api/v1/playlists/{id}/items", s.handlePlaylistAddItem)
+	mux.HandleFunc("DELETE /api/v1/playlists/{id}/items/{videoId}", s.handlePlaylistRemoveItem)
+	mux.HandleFunc("POST /api/v1/playlists/{id}/items/{videoId}/move", s.handlePlaylistMoveItem)
+	mux.HandleFunc("POST /api/v1/shows/{id}/playlist", s.handleShowAddToPlaylist)
+	mux.HandleFunc("GET /api/v1/videos/{id}/playlists", s.handleVideoPlaylists)
 	mux.HandleFunc("GET /stream/{id}", s.handleStream)
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)

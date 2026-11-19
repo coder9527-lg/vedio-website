@@ -32,6 +32,11 @@
           <span>{{len .Show.Seasons}} 季</span>
         </p>
         <p class="show-dir" title="{{.Show.Dir}}">目录：{{.Show.Dir}}</p>
+        {{if .StoreOn}}
+        <div class="pl-show-actions">
+          <button type="button" class="btn-secondary" id="pl-show-add" data-show-id="{{.Show.ID}}">＋ 整剧加入播放列表</button>
+        </div>
+        {{end}}
       </div>
     </section>
 
@@ -49,6 +54,9 @@
             <span class="episode-progress">看到 {{formatDuration $p.Position}}</span>
             {{end}}
           </a>
+          {{if $.StoreOn}}
+          <button type="button" class="btn-secondary pl-ep-add" data-video-id="{{.Video.ID}}" title="本集加入播放列表" aria-label="本集加入播放列表">＋</button>
+          {{end}}
         </li>
         {{end}}
       </ul>
@@ -59,5 +67,148 @@
   <footer class="site-footer">
     <span>vedio-website · Go + Docker · NAS 视频站</span>
   </footer>
+
+  {{if .StoreOn}}
+  <!-- 加入播放列表选择弹窗（整剧 / 单集复用） -->
+  <div class="scrape-modal pl-modal" id="pl-add-modal" hidden>
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="pl-add-title">
+      <div class="scrape-dialog-head">
+        <h3 id="pl-add-title">加入播放列表</h3>
+        <button type="button" class="scrape-close" data-pl-close aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <div class="pl-pick-list" id="pl-pick-list"></div>
+        <div class="pl-create-inline">
+          <input type="text" class="pl-rename-input" id="pl-new-name" maxlength="100" placeholder="新列表名称…" aria-label="新列表名称">
+          <button type="button" id="pl-create-join-btn">新建并加入</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const modal = document.getElementById('pl-add-modal');
+      const pickList = document.getElementById('pl-pick-list');
+      const newName = document.getElementById('pl-new-name');
+      const showID = {{printf "%q" .Show.ID}};
+      // target: {kind:'show'} 整剧，或 {kind:'video', videoId} 单集
+      let target = null;
+
+      async function plFetch(url, options) {
+        const res = await fetch(url, options);
+        if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+        if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); throw new Error('503'); }
+        if (!res.ok) {
+          let msg = 'HTTP ' + res.status;
+          try { const d = await res.json(); if (d.error) msg = d.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        return res.json();
+      }
+      function closeModal() { modal.hidden = true; document.body.style.overflow = ''; }
+      document.querySelectorAll('[data-pl-close]').forEach((b) => b.addEventListener('click', closeModal));
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+      async function joinPlaylist(pid) {
+        if (target.kind === 'show') {
+          return plFetch('/api/v1/shows/' + encodeURIComponent(showID) + '/playlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playlistId: pid })
+          });
+        }
+        return plFetch('/api/v1/playlists/' + encodeURIComponent(pid) + '/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId: target.videoId })
+        });
+      }
+
+      async function renderPick() {
+        pickList.textContent = '加载中…';
+        const [all, mine] = await Promise.all([
+          plFetch('/api/v1/playlists'),
+          target.kind === 'video'
+            ? plFetch('/api/v1/videos/' + encodeURIComponent(target.videoId) + '/playlists')
+            : Promise.resolve({ playlists: [] })
+        ]);
+        pickList.textContent = '';
+        const playlists = all.playlists || [];
+        if (!playlists.length) {
+          const p = document.createElement('p');
+          p.className = 'pl-hint';
+          p.textContent = '还没有播放列表，请在下方新建。';
+          pickList.appendChild(p);
+          return;
+        }
+        const memberIds = new Set((mine.playlists || []).map((m) => m.id));
+        playlists.forEach((pl) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'pl-pick-row';
+          const label = document.createElement('span');
+          label.className = 'pl-pick-name';
+          label.textContent = pl.name + '（' + pl.itemCount + '）';
+          const status = document.createElement('span');
+          status.className = 'pl-pick-status';
+          status.textContent = memberIds.has(pl.id) ? '✓ 已在列表' : '加入';
+          row.append(label, status);
+          row.addEventListener('click', async () => {
+            row.disabled = true;
+            try {
+              const resp = await joinPlaylist(pl.id);
+              if (target.kind === 'show') {
+                status.textContent = '✓ 已加入（新增 ' + resp.added + '，跳过 ' + resp.skipped + '）';
+              } else {
+                status.textContent = resp.added ? '✓ 已加入（新增 1）' : '✓ 已在列表';
+              }
+            } catch (err) {
+              alert('加入失败: ' + err.message);
+              row.disabled = false;
+            }
+          });
+          pickList.appendChild(row);
+        });
+      }
+
+      function openModal(t) {
+        target = t;
+        newName.value = '';
+        modal.hidden = false;
+        document.body.style.overflow = 'hidden';
+        renderPick().catch((err) => {
+          if (err.message !== '未登录' && err.message !== '503') pickList.textContent = '加载失败: ' + err.message;
+        });
+      }
+
+      document.getElementById('pl-show-add').addEventListener('click', () => openModal({ kind: 'show' }));
+      document.querySelectorAll('.pl-ep-add').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openModal({ kind: 'video', videoId: btn.dataset.videoId });
+        });
+      });
+
+      document.getElementById('pl-create-join-btn').addEventListener('click', async () => {
+        const name = newName.value.trim();
+        if (!name) { alert('请输入列表名称'); return; }
+        try {
+          const created = await plFetch('/api/v1/playlists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+          });
+          await joinPlaylist(created.playlist.id);
+          closeModal();
+          alert('已新建并加入「' + created.playlist.name + '」');
+        } catch (err) {
+          alert('创建失败: ' + err.message);
+        }
+      });
+    })();
+  </script>
+  {{end}}
 </body>
 </html>
