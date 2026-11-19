@@ -8,6 +8,7 @@
 # 编辑器/系统
 .idea/
 .vscode/
+.trae/
 .DS_Store
 *.swp
 
