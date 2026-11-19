@@ -4,12 +4,16 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+// ErrNotFound 表示按 ID 查找的记录不存在，handler 层据此映射 404。
+var ErrNotFound = errors.New("记录不存在")
 
 // Progress 是一条播放进度记录。
 type Progress struct {
@@ -64,6 +68,21 @@ CREATE TABLE IF NOT EXISTS favorites (
     video_id TEXT PRIMARY KEY,
     added_at TIMESTAMP NOT NULL
 );
+CREATE TABLE IF NOT EXISTS playlists (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS playlist_item (
+    playlist_id TEXT    NOT NULL,
+    video_id    TEXT    NOT NULL,
+    sort_order  INTEGER NOT NULL,
+    added_at    TIMESTAMP NOT NULL,
+    PRIMARY KEY (playlist_id, video_id)
+);
+CREATE INDEX IF NOT EXISTS idx_playlist_item_video ON playlist_item(video_id);
+CREATE INDEX IF NOT EXISTS idx_playlist_item_order ON playlist_item(playlist_id, sort_order);
 `)
 	return err
 }
@@ -235,7 +254,11 @@ func (s *Store) Prune(existing map[string]bool) error {
 		if _, err := s.db.Exec(`DELETE FROM progress`); err != nil {
 			return err
 		}
-		_, err := s.db.Exec(`DELETE FROM favorites`)
+		if _, err := s.db.Exec(`DELETE FROM favorites`); err != nil {
+			return err
+		}
+		// 只清条目、保留 playlists 表头：空合集仍由用户显式删除
+		_, err := s.db.Exec(`DELETE FROM playlist_item`)
 		return err
 	}
 
@@ -250,7 +273,11 @@ func (s *Store) Prune(existing map[string]bool) error {
 		`DELETE FROM progress WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(
+		`DELETE FROM favorites WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(
-		`DELETE FROM favorites WHERE video_id NOT IN (`+inClause+`)`, args...)
+		`DELETE FROM playlist_item WHERE video_id NOT IN (`+inClause+`)`, args...)
 	return err
 }
