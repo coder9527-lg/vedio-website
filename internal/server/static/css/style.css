@@ -511,3 +511,126 @@ button:disabled { opacity: .6; cursor: wait; }
 .scrape-hit-orig { font-size: 12px; color: var(--muted); }
 .scrape-hit-overview { font-size: 12px; color: var(--muted); line-height: 1.5; }
 .scrape-hit-rating { font-size: 12px; color: #d97706; }
+
+/* ---------- 剧集：首页卡片角标 ---------- */
+.show-badge {
+  background: rgba(14, 116, 144, .92);
+  color: #ecfeff;
+}
+
+/* ---------- 剧集详情页 ---------- */
+.show-head {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px;
+  margin-bottom: 26px;
+}
+.show-poster {
+  width: 160px;
+  min-width: 160px;
+  border-radius: 10px;
+  background: #111827;
+  object-fit: cover;
+}
+.show-head-body { min-width: 0; }
+.show-title { margin: 0 0 10px; font-size: 24px; }
+.show-meta-line {
+  display: flex;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+.show-dir {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.season-block { margin-bottom: 26px; }
+.season-title {
+  font-size: 17px;
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.season-count { color: var(--muted); font-size: 13px; font-weight: 400; }
+
+.episode-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.episode-row {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color .15s ease, transform .15s ease;
+}
+.episode-row:hover { border-color: var(--accent); transform: translateX(3px); }
+.episode-row.has-progress { border-color: rgba(56, 189, 248, .55); }
+.episode-link {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+}
+.episode-badge {
+  background: rgba(56, 189, 248, .14);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+  text-align: center;
+}
+.episode-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.episode-progress { color: var(--accent); font-size: 12px; white-space: nowrap; }
+
+/* ---------- 播放页自动连播 ---------- */
+.auto-next {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, .72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.auto-next[hidden] { display: none; }
+.auto-next-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 26px 30px;
+  text-align: center;
+  min-width: 320px;
+  max-width: 90vw;
+}
+.auto-next-title { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+.auto-next-desc { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+.auto-next-actions { display: flex; gap: 12px; justify-content: center; }
+
+.back-to-show {
+  display: inline-block;
+  margin: 18px 24px 30px;
+  color: var(--accent);
+  font-size: 14px;
+}

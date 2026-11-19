@@ -44,17 +44,22 @@ type Library struct {
 	subs     map[string][]*Subtitle // 视频 ID → 外挂字幕列表
 	metadata map[string]*Metadata   // 视频 ID → 刮削元信息（NFO/本地海报，可能为 nil）
 
+	shows     map[string]*Show  // 剧集 ID → 聚合剧集（仅含能解析出季集标记的视频）
+	videoShow map[string]string // 视频 ID → 所属剧集 ID
+
 	// scraperImageDir 是在线刮削图片与 metadata.json 的缓存目录，非空时扫描会恢复历史刮削结果
 	scraperImageDir string
 }
 
 func NewLibrary(root string, exts map[string]bool) *Library {
 	return &Library{
-		root:     root,
-		exts:     exts,
-		videos:   map[string]*Video{},
-		subs:     map[string][]*Subtitle{},
-		metadata: map[string]*Metadata{},
+		root:      root,
+		exts:      exts,
+		videos:    map[string]*Video{},
+		subs:      map[string][]*Subtitle{},
+		metadata:  map[string]*Metadata{},
+		shows:     map[string]*Show{},
+		videoShow: map[string]string{},
 	}
 }
 
@@ -120,6 +125,7 @@ func (l *Library) Scan() (int, error) {
 	l.videos = found
 	l.subs = subs
 	l.metadata = meta
+	l.rebuildShowsLocked()
 	l.mu.Unlock()
 	return len(found), err
 }
@@ -219,9 +225,13 @@ func (l *Library) SetMetadata(videoID string, md *Metadata) {
 	defer l.mu.Unlock()
 	if md == nil || md.empty() {
 		delete(l.metadata, videoID)
-		return
+	} else {
+		l.metadata[videoID] = md
 	}
-	l.metadata[videoID] = md
+	// 海报/剧名/年份可能变化，刷新所属剧集的摘要信息
+	if key := l.showKeyByVideoLocked(videoID); key != "" {
+		l.rebuildShowLocked(key)
+	}
 }
 
 // RefreshMetadata 重新为单个视频加载 NFO 与本地海报/背景图
@@ -239,6 +249,9 @@ func (l *Library) RefreshMetadata(videoID string) {
 		l.metadata[videoID] = md
 	} else {
 		delete(l.metadata, videoID)
+	}
+	if key := l.showKeyByVideoLocked(videoID); key != "" {
+		l.rebuildShowLocked(key)
 	}
 	l.mu.Unlock()
 }
@@ -332,7 +345,15 @@ func (l *Library) Upsert(path string) (*Video, bool) {
 	subtitles := findSubtitles(l.root, v)
 	md := loadMetadata(l.root, v)
 
+	// 记录变更前所属剧集键（以现有映射为准，覆盖写入同名 ID 时也能拿到旧剧），
+	// 便于改名迁移后同时重建旧剧与新剧
 	l.mu.Lock()
+	oldKey := ""
+	if oldShowID := l.videoShow[v.ID]; oldShowID != "" {
+		if old := l.shows[oldShowID]; old != nil {
+			oldKey = old.key
+		}
+	}
 	l.videos[v.ID] = v
 	if len(subtitles) > 0 {
 		l.subs[v.ID] = subtitles
@@ -343,6 +364,13 @@ func (l *Library) Upsert(path string) (*Video, bool) {
 		l.metadata[v.ID] = md
 	} else {
 		delete(l.metadata, v.ID)
+	}
+	newKey, _, isEp := showKey(v)
+	if oldKey != "" {
+		l.rebuildShowLocked(oldKey)
+	}
+	if isEp && newKey != oldKey {
+		l.rebuildShowLocked(newKey)
 	}
 	l.mu.Unlock()
 	return v, true
@@ -359,6 +387,16 @@ func (l *Library) Remove(path string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	// 先收集受影响的剧集键，删除后逐个重建（成员清零的剧会自动清除）
+	affected := map[string]bool{}
+	for _, v := range l.videos {
+		if v.RelPath == rel || strings.HasPrefix(v.RelPath, rel+"/") {
+			if key, _, ok := showKey(v); ok {
+				affected[key] = true
+			}
+		}
+	}
+
 	removed := 0
 	for id, v := range l.videos {
 		if v.RelPath == rel || strings.HasPrefix(v.RelPath, rel+"/") {
@@ -367,6 +405,9 @@ func (l *Library) Remove(path string) int {
 			delete(l.metadata, id)
 			removed++
 		}
+	}
+	for key := range affected {
+		l.rebuildShowLocked(key)
 	}
 	return removed
 }

@@ -632,5 +632,63 @@
     })();
   </script>
   {{end}}
+
+  {{if .NextVideo}}
+  <div id="auto-next" class="auto-next" hidden data-auto-next>
+    <div class="auto-next-card">
+      <p class="auto-next-title">本集播放完毕</p>
+      <p class="auto-next-desc"><span id="auto-next-count">5</span> 秒后自动播放下一集：{{.NextVideo.Name}}</p>
+      <div class="auto-next-actions">
+        <button type="button" id="auto-next-go" class="btn-primary">立即播放</button>
+        <button type="button" id="auto-next-cancel" class="btn-secondary">取消连播</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const nextURL = '/watch/' + {{printf "%q" .NextVideo.ID}};
+      const player = document.getElementById('player');
+      const box = document.getElementById('auto-next');
+      const countEl = document.getElementById('auto-next-count');
+      const goBtn = document.getElementById('auto-next-go');
+      const cancelBtn = document.getElementById('auto-next-cancel');
+      let timer = null;
+      let remain = 5;
+
+      function clearAutoTimer() {
+        if (timer) { clearInterval(timer); timer = null; }
+      }
+      function cancelAutoNext() {
+        clearAutoTimer();
+        box.hidden = true;
+        player.removeEventListener('play', cancelAutoNext);
+      }
+      function startAutoNext() {
+        box.hidden = false;
+        remain = 5;
+        countEl.textContent = remain;
+        clearAutoTimer();
+        timer = setInterval(() => {
+          remain -= 1;
+          if (remain <= 0) {
+            clearAutoTimer();
+            location.href = nextURL;
+            return;
+          }
+          countEl.textContent = remain;
+        }, 1000);
+      }
+
+      player.addEventListener('ended', startAutoNext);
+      // 用户手动重播本集时撤销连播
+      player.addEventListener('play', () => { if (!box.hidden) cancelAutoNext(); });
+      goBtn.addEventListener('click', () => location.href = nextURL);
+      cancelBtn.addEventListener('click', cancelAutoNext);
+    })();
+  </script>
+  {{end}}
+  {{if .ShowID}}
+  <a class="back-to-show" href="/shows/{{.ShowID}}">← 返回剧集详情</a>
+  {{end}}
 </body>
 </html>

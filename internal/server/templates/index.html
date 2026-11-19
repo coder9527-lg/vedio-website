@@ -39,29 +39,56 @@
       </label>
     </form>
 
+    <nav class="view-tabs" aria-label="类型切换">
+      <a href="/?type=all&view={{.View}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .Type "all"}}active{{end}}">全部</a>
+      <a href="/?type=show&view={{.View}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .Type "show"}}active{{end}}">剧集</a>
+      <a href="/?type=movie&view={{.View}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .Type "movie"}}active{{end}}">电影</a>
+    </nav>
+
     {{if .StoreOn}}
     <nav class="view-tabs" aria-label="视图切换">
-      <a href="/?q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "all"}}active{{end}}">全部</a>
-      <a href="/?view=continue&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "continue"}}active{{end}}">继续观看</a>
-      <a href="/?view=favorites&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "favorites"}}active{{end}}">⭐ 收藏</a>
+      <a href="/?type={{.Type}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "all"}}active{{end}}">全部</a>
+      <a href="/?type={{.Type}}&view=continue&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "continue"}}active{{end}}">继续观看</a>
+      <a href="/?type={{.Type}}&view=favorites&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "favorites"}}active{{end}}">⭐ 收藏</a>
     </nav>
     {{end}}
 
-    {{if .Videos}}
+    {{if .Cards}}
     <div class="video-grid">
-      {{range .Videos}}
-      {{$p := index $.State.Progress .ID}}
-      {{$md := index $.Metadata .ID}}
+      {{range .Cards}}
+      {{if .IsShow}}
+      {{$show := .Show}}
       <div class="video-card-wrap">
-        <a class="video-card" href="/watch/{{.ID}}">
+        <a class="video-card" href="/shows/{{$show.ID}}">
+          <div class="thumb-wrap">
+            {{if $show.PosterVideoID}}
+            <img class="thumb" src="/artwork/{{$show.PosterVideoID}}/poster" alt="{{$show.Title}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$show.FirstEpisodeID}}" alt="{{$show.Title}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge show-badge">剧集 · {{$show.EpisodeCount}} 集</span>
+          </div>
+          <div class="meta">
+            <h2 class="video-name" title="{{$show.Dir}}">{{$show.Title}}</h2>
+            <p class="video-path">{{$show.Dir}}</p>
+            <p class="meta-rating">{{len $show.Seasons}} 季 · {{$show.EpisodeCount}} 集{{if $show.Year}} · {{$show.Year}}{{end}}</p>
+          </div>
+        </a>
+      </div>
+      {{else}}
+      {{$v := .Video}}
+      {{$p := index $.State.Progress $v.ID}}
+      {{$md := index $.Metadata $v.ID}}
+      <div class="video-card-wrap">
+        <a class="video-card" href="/watch/{{$v.ID}}">
           <div class="thumb-wrap">
             {{if and $md $md.PosterPath}}
-            <img class="thumb" src="/artwork/{{.ID}}/poster" alt="{{.Name}}" loading="lazy">
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
             {{else}}
-            <img class="thumb" src="/thumb/{{.ID}}" alt="{{.Name}}" loading="lazy">
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
             {{end}}
-            <span class="ext-badge">{{.Ext}}</span>
-            {{if index $.State.Favs .ID}}<span class="fav-badge" title="已收藏">⭐</span>{{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+            {{if index $.State.Favs $v.ID}}<span class="fav-badge" title="已收藏">⭐</span>{{end}}
             {{if hasProgress $p.Position $p.Duration}}
             <div class="progress-bar" title="已看到 {{formatDuration $p.Position}} / {{formatDuration $p.Duration}}">
               <div class="progress-fill" style="width: {{progressPercent $p.Position $p.Duration}}%"></div>
@@ -70,12 +97,12 @@
           </div>
           <div class="meta">
             {{if and $md $md.Title}}
-            <h2 class="video-name" title="{{.RelPath}}">{{$md.Title}}{{if $md.Year}} <span class="meta-year">({{$md.Year}})</span>{{end}}</h2>
-            {{if ne $md.Title .Name}}<p class="video-original-name">{{.Name}}</p>{{end}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$md.Title}}{{if $md.Year}} <span class="meta-year">({{$md.Year}})</span>{{end}}</h2>
+            {{if ne $md.Title $v.Name}}<p class="video-original-name">{{$v.Name}}</p>{{end}}
             {{else}}
-            <h2 class="video-name" title="{{.RelPath}}">{{.Name}}</h2>
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
             {{end}}
-            <p class="video-path">{{.RelPath}}</p>
+            <p class="video-path">{{$v.RelPath}}</p>
             {{if and $md $md.Rating}}
             <p class="meta-rating">⭐ {{printf "%.1f" $md.Rating}}{{if $md.Runtime}} · {{$md.Runtime}} 分钟{{end}}{{if $md.Genres}} · {{index $md.Genres 0}}{{end}}</p>
             {{end}}
@@ -85,12 +112,13 @@
           </div>
         </a>
         {{if $.StoreOn}}
-        <button type="button" class="fav-toggle {{if index $.State.Favs .ID}}is-fav{{end}}"
-                data-id="{{.ID}}" data-fav="{{if index $.State.Favs .ID}}true{{else}}false{{end}}"
-                title="{{if index $.State.Favs .ID}}取消收藏{{else}}收藏{{end}}"
+        <button type="button" class="fav-toggle {{if index $.State.Favs $v.ID}}is-fav{{end}}"
+                data-id="{{$v.ID}}" data-fav="{{if index $.State.Favs $v.ID}}true{{else}}false{{end}}"
+                title="{{if index $.State.Favs $v.ID}}取消收藏{{else}}收藏{{end}}"
                 aria-label="收藏切换">☆</button>
         {{end}}
       </div>
+      {{end}}
       {{end}}
     </div>
     {{else}}

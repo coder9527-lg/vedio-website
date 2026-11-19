@@ -28,6 +28,7 @@ var allowedSorts = map[string]bool{
 type indexData struct {
 	basePage
 	Videos   []*media.Video
+	Cards    []homeCard                 // 首页卡片：默认视图下剧集成员折叠为剧集卡片
 	Metadata map[string]*media.Metadata // 视频 ID → 元信息（无元信息的视频不在 map 中）
 	Count    int                        // 当前视图下的视频数
 	Total    int                        // 媒体库视频总数
@@ -35,6 +36,7 @@ type indexData struct {
 	Query    string // 搜索关键字
 	Sort     string // 当前排序
 	View     string // all | favorites | continue
+	Type     string // all | movie | show
 	StoreOn  bool   // 是否启用持久化
 }
 
@@ -53,6 +55,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if view != "favorites" && view != "continue" {
 		view = "all"
 	}
+	typeFilter := normalizeTypeFilter(q.Get("type"))
 
 	query := media.Query{Keyword: keyword, Sort: sortVal}
 	state := s.loadVideoState()
@@ -81,6 +84,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "index.html", indexData{
 		basePage: basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
 		Videos:   videos,
+		Cards:    s.buildHomeCards(videos, typeFilter),
 		Metadata: metaMap,
 		Count:    len(videos),
 		Total:    s.library.Len(),
@@ -88,6 +92,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Query:    keyword,
 		Sort:     sortVal,
 		View:     view,
+		Type:     typeFilter,
 		StoreOn:  s.storeEnabled(),
 	})
 }
@@ -107,6 +112,12 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	if md == nil {
 		md = &media.Metadata{}
 	}
+	// 剧集成员：带上所属剧集 ID 与下一集，供播放页自动连播
+	showID, _ := s.library.ShowIDOf(v.ID)
+	var nextVideo *media.Video
+	if showID != "" {
+		nextVideo, _ = s.library.NextEpisode(v.ID)
+	}
 	s.render(w, "watch.html", struct {
 		basePage
 		Video          *media.Video
@@ -117,6 +128,8 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		ScrapeOn       bool
 		NativePlayable bool
 		Subtitles      []*media.Subtitle
+		ShowID         string
+		NextVideo      *media.Video
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
@@ -127,6 +140,8 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		ScrapeOn:       s.scraperEnabled(),
 		NativePlayable: isNativePlayable(v.Ext),
 		Subtitles:      subtitles,
+		ShowID:         showID,
+		NextVideo:      nextVideo,
 	})
 }
 
