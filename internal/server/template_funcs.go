@@ -84,6 +84,25 @@ var tmplFuncs = template.FuncMap{
 		}
 		return true
 	},
+	// formatWatchHours 把累计观看秒数格式化为统计语义文案：
+	// >=1 小时显示「X 小时 Y 分」，不足 1 小时显示「Y 分钟」，0 显示「0 分钟」。
+	"formatWatchHours": func(sec float64) string {
+		total := int(math.Round(sec))
+		if total <= 0 {
+			return "0 分钟"
+		}
+		h, m := total/3600, (total%3600)/60
+		if h > 0 {
+			if m > 0 {
+				return itoa(h) + " 小时 " + itoa(m) + " 分"
+			}
+			return itoa(h) + " 小时"
+		}
+		if m == 0 {
+			m = 1 // 不足 1 分钟但有零星秒数，避免显示 0 分钟
+		}
+		return itoa(m) + " 分钟"
+	},
 }
 
 // humanSize 把字节数格式化为人类可读的文件大小（B/KB/MB/GB/TB，保留 1 位小数）。

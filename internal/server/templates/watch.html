@@ -595,6 +595,10 @@
       const SEEK_MIN_DELTA = 3; // 与已保存位置相差超过 3 秒才跳转，避免抖动
       let lastSaved = 0;
       let resumeDone = false;
+      // 观影统计：pendingWatch 累计本会话尚未成功上报的播放墙钟秒；
+      // sessionStartSent 标记本会话首次成功上报是否已发生（用于服务端播放次数 +1）。
+      let pendingWatch = 0;
+      let sessionStartSent = false;
 
       async function saveProgress() {
         if (!player.currentTime || player.currentTime < 1) return;
@@ -604,11 +608,16 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               position: player.currentTime,
-              duration: player.duration || 0
+              duration: player.duration || 0,
+              watchDelta: pendingWatch,
+              sessionStart: !sessionStartSent
             })
           });
           if (res.status === 401) { location.href = '/login'; return; }
           if (res.ok) {
+            // 仅成功后清零增量并确认会话已开始，失败则保留到下个周期补报，避免丢时长
+            pendingWatch = 0;
+            sessionStartSent = true;
             lastSaved = player.currentTime;
             saveHint.textContent = '进度已保存 · ' + new Date().toLocaleTimeString();
           }
@@ -650,6 +659,11 @@
         if (!player.paused && player.currentTime - lastSaved >= SAVE_INTERVAL) {
           saveProgress();
         }
+      }, 1000);
+
+      // 累计真实播放墙钟秒：仅在播放中（非暂停、未结束）每秒 +1，随下次进度上报
+      setInterval(() => {
+        if (!player.paused && !player.ended) pendingWatch += 1;
       }, 1000);
 
       // 暂停 / 跳到结尾 / 关闭页面前各保存一次

@@ -17,10 +17,31 @@ var ErrNotFound = errors.New("记录不存在")
 
 // Progress 是一条播放进度记录。
 type Progress struct {
-	VideoID   string    `json:"videoId"`
-	Position  float64   `json:"position"` // 播放位置（秒）
-	Duration  float64   `json:"duration"` // 视频总时长（秒），未知时为 0
-	UpdatedAt time.Time `json:"updatedAt"`
+	VideoID          string    `json:"videoId"`
+	Position         float64   `json:"position"`         // 播放位置（秒）
+	Duration         float64   `json:"duration"`         // 视频总时长（秒），未知时为 0
+	WatchTimeSeconds float64   `json:"watchTimeSeconds"` // 累计观看时长（秒），多次观看增量累加
+	PlayCount        int64     `json:"playCount"`        // 播放次数（每次播放会话首次上报 +1）
+	Completed        bool      `json:"completed"`        // 是否看完（>=95%），黏滞，置真后不回退
+	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+// ProgressUpdate 是一次播放进度上报的入参，由 handler 组装后交给 SaveProgress。
+type ProgressUpdate struct {
+	Position     float64 // 当前播放位置（秒）
+	Duration     float64 // 视频总时长（秒），未知时为 0
+	WatchDelta   float64 // 本次上报距上次成功上报之间新增的观看秒数
+	SessionStart bool    // 是否为本次播放会话的首次上报（用于累计播放次数）
+	Completed    bool    // 本次上报是否达到看完阈值（store 仅做黏滞存储，阈值在 handler 判定）
+}
+
+// WatchStats 是观影统计页顶部的聚合数字。
+type WatchStats struct {
+	TotalWatchSeconds float64 // 全部视频累计观看时长（秒）
+	WatchedVideos     int64   // 有进度记录的去重视频数
+	CompletedVideos   int64   // 已看完的视频数
+	TotalPlays        int64   // 全部视频累计播放次数
+	FavoriteCount     int64   // 收藏视频数
 }
 
 // Favorite 是一条收藏记录。
@@ -59,10 +80,13 @@ func Open(path string) (*Store, error) {
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS progress (
-    video_id   TEXT PRIMARY KEY,
-    position   REAL NOT NULL DEFAULT 0,
-    duration   REAL NOT NULL DEFAULT 0,
-    updated_at TIMESTAMP NOT NULL
+    video_id            TEXT PRIMARY KEY,
+    position            REAL NOT NULL DEFAULT 0,
+    duration            REAL NOT NULL DEFAULT 0,
+    watch_time_seconds  REAL NOT NULL DEFAULT 0,
+    play_count          INTEGER NOT NULL DEFAULT 0,
+    completed           INTEGER NOT NULL DEFAULT 0,
+    updated_at          TIMESTAMP NOT NULL
 );
 CREATE TABLE IF NOT EXISTS favorites (
     video_id TEXT PRIMARY KEY,
@@ -93,6 +117,36 @@ CREATE TABLE IF NOT EXISTS shares (
 CREATE INDEX IF NOT EXISTS idx_shares_video ON shares(video_id);
 CREATE INDEX IF NOT EXISTS idx_shares_expires ON shares(expires_at);
 `)
+	if err != nil {
+		return err
+	}
+	// 老库升级：CREATE TABLE IF NOT EXISTS 不会改已存在的表，需逐列补齐（幂等）。
+	// SetMaxOpenConns(1) 串行执行，无并发 DDL 风险。
+	for _, c := range []struct{ name, ddlType string }{
+		{"watch_time_seconds", "REAL NOT NULL DEFAULT 0"},
+		{"play_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"completed", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := s.addColumnIfNotExists("progress", c.name, c.ddlType); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addColumnIfNotExists 在 table 缺少 column 时执行 ALTER TABLE 补列，已存在则跳过。
+func (s *Store) addColumnIfNotExists(table, column, ddlType string) error {
+	var dummy int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column,
+	).Scan(&dummy)
+	if err == nil {
+		return nil // 列已存在
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	_, err = s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddlType))
 	return err
 }
 
@@ -104,48 +158,82 @@ func (s *Store) DB() *sql.DB { return s.db }
 
 // ---------- 播放进度 ----------
 
-// SaveProgress 上报播放进度。position/duration 为负数时按 0 处理。
-func (s *Store) SaveProgress(videoID string, position, duration float64) error {
+// progressColumns 是 progress 表的完整列，集中维护避免多处手写漂移。
+const progressColumns = `video_id, position, duration, watch_time_seconds, play_count, completed, updated_at`
+
+// SaveProgress 上报一次播放进度。
+// 位置/时长为覆盖式更新；观看时长按 WatchDelta 累加；播放次数在 SessionStart 时 +1；
+// completed 取历史与本次的较大值（黏滞，置真后不回退）。各数值字段为负时按 0 处理。
+func (s *Store) SaveProgress(videoID string, u ProgressUpdate) error {
 	if videoID == "" {
 		return fmt.Errorf("videoID 不能为空")
 	}
-	if position < 0 {
-		position = 0
+	if u.Position < 0 {
+		u.Position = 0
 	}
-	if duration < 0 {
-		duration = 0
+	if u.Duration < 0 {
+		u.Duration = 0
+	}
+	if u.WatchDelta < 0 {
+		u.WatchDelta = 0
+	}
+	// 新行的初始播放次数：会话开始记 1，否则 0
+	insertPlayCount := int64(0)
+	if u.SessionStart {
+		insertPlayCount = 1
+	}
+	completed := 0
+	if u.Completed {
+		completed = 1
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO progress(video_id, position, duration, updated_at)
-		 VALUES(?, ?, ?, ?)
+		`INSERT INTO progress(video_id, position, duration, watch_time_seconds, play_count, completed, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(video_id) DO UPDATE SET
 		   position=excluded.position,
 		   duration=excluded.duration,
+		   watch_time_seconds=progress.watch_time_seconds + excluded.watch_time_seconds,
+		   play_count=progress.play_count + ?,
+		   completed=MAX(progress.completed, excluded.completed),
 		   updated_at=excluded.updated_at`,
-		videoID, position, duration, time.Now().UTC(),
+		videoID, u.Position, u.Duration, u.WatchDelta, insertPlayCount, completed, time.Now().UTC(),
+		// 冲突分支的播放次数增量：会话开始 +1，否则 +0（同一 SessionStart 语义在此复用一次）
+		insertPlayCount,
 	)
 	return err
+}
+
+// scanProgress 统一收口一行 progress 的扫描，列顺序须与 progressColumns 一致。
+func scanProgress(scanner interface{ Scan(...any) error }) (Progress, error) {
+	var p Progress
+	var completed int
+	if err := scanner.Scan(&p.VideoID, &p.Position, &p.Duration,
+		&p.WatchTimeSeconds, &p.PlayCount, &completed, &p.UpdatedAt); err != nil {
+		return Progress{}, err
+	}
+	p.Completed = completed != 0
+	return p, nil
 }
 
 // GetProgress 查询单个视频的播放进度，无记录时返回 nil。
 func (s *Store) GetProgress(videoID string) (*Progress, error) {
 	row := s.db.QueryRow(
-		`SELECT video_id, position, duration, updated_at FROM progress WHERE video_id = ?`,
+		`SELECT `+progressColumns+` FROM progress WHERE video_id = ?`,
 		videoID,
 	)
-	p := &Progress{}
-	if err := row.Scan(&p.VideoID, &p.Position, &p.Duration, &p.UpdatedAt); err != nil {
+	p, err := scanProgress(row)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return p, nil
+	return &p, nil
 }
 
 // ProgressMap 批量查询进度，返回 videoID -> Progress，供列表页一次取全。
 func (s *Store) ProgressMap() (map[string]Progress, error) {
-	rows, err := s.db.Query(`SELECT video_id, position, duration, updated_at FROM progress`)
+	rows, err := s.db.Query(`SELECT ` + progressColumns + ` FROM progress`)
 	if err != nil {
 		return nil, err
 	}
@@ -153,8 +241,8 @@ func (s *Store) ProgressMap() (map[string]Progress, error) {
 
 	out := make(map[string]Progress)
 	for rows.Next() {
-		var p Progress
-		if err := rows.Scan(&p.VideoID, &p.Position, &p.Duration, &p.UpdatedAt); err != nil {
+		p, err := scanProgress(rows)
+		if err != nil {
 			return nil, err
 		}
 		out[p.VideoID] = p
@@ -168,8 +256,7 @@ func (s *Store) RecentProgress(limit int) ([]Progress, error) {
 		limit = 20
 	}
 	rows, err := s.db.Query(
-		`SELECT video_id, position, duration, updated_at
-		 FROM progress ORDER BY updated_at DESC LIMIT ?`, limit)
+		`SELECT `+progressColumns+` FROM progress ORDER BY updated_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -177,13 +264,56 @@ func (s *Store) RecentProgress(limit int) ([]Progress, error) {
 
 	var out []Progress
 	for rows.Next() {
-		var p Progress
-		if err := rows.Scan(&p.VideoID, &p.Position, &p.Duration, &p.UpdatedAt); err != nil {
+		p, err := scanProgress(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// CompletedProgress 返回已看完（completed=1）的进度记录（按更新时间倒序），limit <= 0 时默认 20。
+func (s *Store) CompletedProgress(limit int) ([]Progress, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(
+		`SELECT `+progressColumns+` FROM progress WHERE completed = 1
+		 ORDER BY updated_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Progress
+	for rows.Next() {
+		p, err := scanProgress(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// WatchStats 聚合观影统计页顶部数字：progress 一条查询取四项，收藏数另查 favorites。
+func (s *Store) WatchStats() (WatchStats, error) {
+	var st WatchStats
+	err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(watch_time_seconds), 0),
+		        COUNT(1),
+		        COALESCE(SUM(completed), 0),
+		        COALESCE(SUM(play_count), 0)
+		 FROM progress`,
+	).Scan(&st.TotalWatchSeconds, &st.WatchedVideos, &st.CompletedVideos, &st.TotalPlays)
+	if err != nil {
+		return WatchStats{}, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(1) FROM favorites`).Scan(&st.FavoriteCount); err != nil {
+		return WatchStats{}, err
+	}
+	return st, nil
 }
 
 // DeleteProgress 删除一条播放进度（如「清除记录」）。

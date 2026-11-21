@@ -23,11 +23,11 @@ func TestProgressUpsertAndGet(t *testing.T) {
 		t.Fatalf("空库查询应返回 nil, got=%v err=%v", got, err)
 	}
 
-	if err := s.SaveProgress("v1", 12.5, 100); err != nil {
+	if err := s.SaveProgress("v1", ProgressUpdate{Position: 12.5, Duration: 100}); err != nil {
 		t.Fatalf("SaveProgress 失败: %v", err)
 	}
 	// 再次上报应 upsert 而非重复插入
-	if err := s.SaveProgress("v1", 40, 100); err != nil {
+	if err := s.SaveProgress("v1", ProgressUpdate{Position: 40, Duration: 100}); err != nil {
 		t.Fatalf("二次 SaveProgress 失败: %v", err)
 	}
 
@@ -42,7 +42,7 @@ func TestProgressUpsertAndGet(t *testing.T) {
 
 func TestProgressNegativeClamped(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.SaveProgress("v1", -5, -9); err != nil {
+	if err := s.SaveProgress("v1", ProgressUpdate{Position: -5, Duration: -9}); err != nil {
 		t.Fatal(err)
 	}
 	p, err := s.GetProgress("v1")
@@ -56,7 +56,7 @@ func TestProgressNegativeClamped(t *testing.T) {
 
 func TestSaveProgressEmptyID(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.SaveProgress("", 1, 1); err == nil {
+	if err := s.SaveProgress("", ProgressUpdate{Position: 1, Duration: 1}); err == nil {
 		t.Fatal("空 videoID 应报错")
 	}
 }
@@ -64,7 +64,7 @@ func TestSaveProgressEmptyID(t *testing.T) {
 func TestProgressMapAndRecent(t *testing.T) {
 	s := openTestStore(t)
 	for i, id := range []string{"a", "b", "c"} {
-		if err := s.SaveProgress(id, float64(i), 10); err != nil {
+		if err := s.SaveProgress(id, ProgressUpdate{Position: float64(i), Duration: 10}); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(5 * time.Millisecond) // 保证 updated_at 可区分
@@ -92,7 +92,7 @@ func TestProgressMapAndRecent(t *testing.T) {
 
 func TestDeleteProgress(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.SaveProgress("v1", 10, 100); err != nil {
+	if err := s.SaveProgress("v1", ProgressUpdate{Position: 10, Duration: 100}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteProgress("v1"); err != nil {
@@ -149,8 +149,8 @@ func TestSetFavoriteEmptyID(t *testing.T) {
 
 func TestPruneOrphans(t *testing.T) {
 	s := openTestStore(t)
-	_ = s.SaveProgress("keep", 1, 10)
-	_ = s.SaveProgress("gone", 2, 10)
+	_ = s.SaveProgress("keep", ProgressUpdate{Position: 1, Duration: 10})
+	_ = s.SaveProgress("gone", ProgressUpdate{Position: 2, Duration: 10})
 	_ = s.SetFavorite("keep", true)
 	_ = s.SetFavorite("gone", true)
 
@@ -174,7 +174,7 @@ func TestPruneOrphans(t *testing.T) {
 
 func TestPruneEmptyExistingClearsAll(t *testing.T) {
 	s := openTestStore(t)
-	_ = s.SaveProgress("v1", 1, 10)
+	_ = s.SaveProgress("v1", ProgressUpdate{Position: 1, Duration: 10})
 	_ = s.SetFavorite("v1", true)
 
 	if err := s.Prune(map[string]bool{}); err != nil {
@@ -193,7 +193,7 @@ func TestReopenPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveProgress("v1", 99, 200); err != nil {
+	if err := s.SaveProgress("v1", ProgressUpdate{Position: 99, Duration: 200}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetFavorite("v1", true); err != nil {
@@ -214,5 +214,170 @@ func TestReopenPersists(t *testing.T) {
 	}
 	if ok, _ := s2.IsFavorite("v1"); !ok {
 		t.Fatal("重开后收藏丢失")
+	}
+}
+
+func TestSaveProgressAccumulates(t *testing.T) {
+	s := openTestStore(t)
+
+	// 首次上报（会话开始）：watch 增量 5，播放次数 1
+	if err := s.SaveProgress("v1", ProgressUpdate{
+		Position: 5, Duration: 100, WatchDelta: 5, SessionStart: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 同一会话后续上报：再累计 7，播放次数不变
+	if err := s.SaveProgress("v1", ProgressUpdate{
+		Position: 12, Duration: 100, WatchDelta: 7, SessionStart: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 新会话（刷新页面）：再累计 3，播放次数 +1
+	if err := s.SaveProgress("v1", ProgressUpdate{
+		Position: 15, Duration: 100, WatchDelta: 3, SessionStart: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := s.GetProgress("v1")
+	if err != nil || p == nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	if p.WatchTimeSeconds != 15 {
+		t.Fatalf("累计观看时长应为 15，got %v", p.WatchTimeSeconds)
+	}
+	if p.PlayCount != 2 {
+		t.Fatalf("播放次数应为 2，got %d", p.PlayCount)
+	}
+	// 位置仍为覆盖式更新
+	if p.Position != 15 {
+		t.Fatalf("位置应为 15，got %v", p.Position)
+	}
+}
+
+func TestCompletedSticky(t *testing.T) {
+	s := openTestStore(t)
+
+	// 达到看完阈值
+	if err := s.SaveProgress("v1", ProgressUpdate{
+		Position: 96, Duration: 100, WatchDelta: 1, Completed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 后续上报未达阈值（用户回看），completed 不应回退
+	if err := s.SaveProgress("v1", ProgressUpdate{
+		Position: 20, Duration: 100, WatchDelta: 1, Completed: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.GetProgress("v1")
+	if p == nil || !p.Completed {
+		t.Fatalf("看完标记应黏滞为 true，got %+v", p)
+	}
+
+	// 未达阈值的另一条记录应保持 false
+	if err := s.SaveProgress("v2", ProgressUpdate{Position: 10, Duration: 100}); err != nil {
+		t.Fatal(err)
+	}
+	p2, _ := s.GetProgress("v2")
+	if p2 == nil || p2.Completed {
+		t.Fatalf("未看完应为 false，got %+v", p2)
+	}
+}
+
+func TestWatchStats(t *testing.T) {
+	s := openTestStore(t)
+
+	_ = s.SaveProgress("v1", ProgressUpdate{Position: 96, Duration: 100, WatchDelta: 50, SessionStart: true, Completed: true})
+	_ = s.SaveProgress("v2", ProgressUpdate{Position: 30, Duration: 100, WatchDelta: 30, SessionStart: true})
+	_ = s.SaveProgress("v3", ProgressUpdate{Position: 10, Duration: 100, WatchDelta: 20, SessionStart: true})
+	// v3 再补一次会话开始，使总播放次数 = 4
+	_ = s.SaveProgress("v3", ProgressUpdate{Position: 12, Duration: 100, WatchDelta: 5, SessionStart: true})
+	_ = s.SetFavorite("v1", true)
+	_ = s.SetFavorite("v2", true)
+
+	st, err := s.WatchStats()
+	if err != nil {
+		t.Fatalf("WatchStats 失败: %v", err)
+	}
+	if st.WatchedVideos != 3 {
+		t.Fatalf("观看影片数应为 3，got %d", st.WatchedVideos)
+	}
+	if st.CompletedVideos != 1 {
+		t.Fatalf("看完数应为 1，got %d", st.CompletedVideos)
+	}
+	if st.TotalWatchSeconds != 105 {
+		t.Fatalf("总观看时长应为 105，got %v", st.TotalWatchSeconds)
+	}
+	if st.TotalPlays != 4 {
+		t.Fatalf("总播放次数应为 4，got %d", st.TotalPlays)
+	}
+	if st.FavoriteCount != 2 {
+		t.Fatalf("收藏数应为 2，got %d", st.FavoriteCount)
+	}
+}
+
+func TestCompletedProgress(t *testing.T) {
+	s := openTestStore(t)
+
+	_ = s.SaveProgress("done1", ProgressUpdate{Position: 96, Duration: 100, Completed: true})
+	time.Sleep(2 * time.Millisecond)
+	_ = s.SaveProgress("done2", ProgressUpdate{Position: 97, Duration: 100, Completed: true})
+	_ = s.SaveProgress("watching", ProgressUpdate{Position: 10, Duration: 100, Completed: false})
+
+	list, err := s.CompletedProgress(0)
+	if err != nil {
+		t.Fatalf("CompletedProgress 失败: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("应只返回 2 条看完记录，got %d", len(list))
+	}
+	// 按 updated_at 倒序：后写入的 done2 在前
+	if list[0].VideoID != "done2" || list[1].VideoID != "done1" {
+		t.Fatalf("倒序错误: %s, %s", list[0].VideoID, list[1].VideoID)
+	}
+	for _, p := range list {
+		if !p.Completed {
+			t.Fatalf("返回了未看完记录: %s", p.VideoID)
+		}
+	}
+}
+
+func TestProgressMigrationAddsColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "migrate.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 新库迁移后应含三个新列，且旧风格（不带统计字段）写入得到默认零值
+	if err := s.SaveProgress("v1", ProgressUpdate{Position: 10, Duration: 100}); err != nil {
+		t.Fatal(err)
+	}
+	var cols int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(1) FROM pragma_table_info('progress')
+		 WHERE name IN ('watch_time_seconds','play_count','completed')`,
+	).Scan(&cols); err != nil {
+		t.Fatal(err)
+	}
+	if cols != 3 {
+		t.Fatalf("progress 应含 3 个新列，实际 %d", cols)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 重开同一库：迁移幂等，数据保留且新列为默认值
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	p, err := s2.GetProgress("v1")
+	if err != nil || p == nil {
+		t.Fatalf("重开查询失败: %v", err)
+	}
+	if p.WatchTimeSeconds != 0 || p.PlayCount != 0 || p.Completed {
+		t.Fatalf("新列默认值错误: %+v", p)
 	}
 }

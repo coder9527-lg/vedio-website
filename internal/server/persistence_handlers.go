@@ -21,9 +21,12 @@ func (s *Server) requireStore(w http.ResponseWriter) bool {
 }
 
 // progressRequest 是前端上报播放进度的请求体。
+// WatchDelta/SessionStart 为可选字段，旧客户端省略时为零值，向后兼容。
 type progressRequest struct {
-	Position float64 `json:"position"`
-	Duration float64 `json:"duration"`
+	Position     float64 `json:"position"`
+	Duration     float64 `json:"duration"`
+	WatchDelta   float64 `json:"watchDelta"`   // 本次上报新增的观看秒数
+	SessionStart bool    `json:"sessionStart"` // 是否为本次播放会话首次上报
 }
 
 // handleProgressPut 上报/更新某个视频的播放进度。
@@ -50,11 +53,19 @@ func (s *Server) handleProgressPut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.Position < 0 || req.Duration < 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "position/duration 不能为负数"})
+	if req.Position < 0 || req.Duration < 0 || req.WatchDelta < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "position/duration/watchDelta 不能为负数"})
 		return
 	}
-	if err := s.store.SaveProgress(id, req.Position, req.Duration); err != nil {
+	// 看完判定与前端、hasProgress 同口径：duration 已知且播放位置 >=95%；duration=0 永不自动完成
+	completed := req.Duration > 0 && req.Position/req.Duration >= 0.95
+	if err := s.store.SaveProgress(id, store.ProgressUpdate{
+		Position:     req.Position,
+		Duration:     req.Duration,
+		WatchDelta:   req.WatchDelta,
+		SessionStart: req.SessionStart,
+		Completed:    completed,
+	}); err != nil {
 		log.Printf("保存播放进度失败: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "保存进度失败"})
 		return

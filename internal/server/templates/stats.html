@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="stats-heading">📊 观影统计</h2>
+
+    {{if not .StoreOn}}
+    <div class="empty">
+      <p>未启用持久化（DB_PATH 未配置），暂无观影统计。</p>
+      <p class="hint">配置数据库路径后，播放进度、观看时长与收藏数据会自动累计并在此汇总。</p>
+    </div>
+    {{else}}
+
+    <section class="stats-grid" aria-label="观影概览">
+      <div class="stat-card">
+        <p class="stat-label">总观看时长</p>
+        <p class="stat-value">{{formatWatchHours .Stats.TotalWatchSeconds}}</p>
+        <p class="stat-sub">共播放 {{.Stats.TotalPlays}} 次</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">观看影片数</p>
+        <p class="stat-value">{{.Stats.WatchedVideos}}</p>
+        <p class="stat-sub">有播放记录的去重视频</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">已看完</p>
+        <p class="stat-value">{{.Stats.CompletedVideos}}</p>
+        <p class="stat-sub">播放进度达到 95%</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">收藏数</p>
+        <p class="stat-value">{{.Stats.FavoriteCount}}</p>
+        <p class="stat-sub">已加入收藏的视频</p>
+      </div>
+    </section>
+
+    <section class="dist-section" aria-label="最常看类型">
+      <h2 class="shelf-title">最常看类型</h2>
+      {{if .Genres}}
+      {{range .Genres}}
+      <div class="dist-row">
+        <span class="dist-name">{{.Name}}</span>
+        <span class="dist-bar"><span class="dist-fill" style="width: {{.Percent}}%"></span></span>
+        <span class="dist-count">{{.Count}}</span>
+      </div>
+      {{end}}
+      {{else}}
+      <p class="empty">暂无可统计的类型数据（需要影片元信息）。</p>
+      {{end}}
+    </section>
+
+    <section class="dist-section" aria-label="年份分布">
+      <h2 class="shelf-title">年份分布</h2>
+      {{if .Years}}
+      {{range .Years}}
+      <div class="dist-row">
+        <span class="dist-name">{{.Name}}</span>
+        <span class="dist-bar"><span class="dist-fill" style="width: {{.Percent}}%"></span></span>
+        <span class="dist-count">{{.Count}}</span>
+      </div>
+      {{end}}
+      {{else}}
+      <p class="empty">暂无可统计的年份数据（需要影片元信息）。</p>
+      {{end}}
+    </section>
+
+    {{if .RecentCards}}
+    <section class="shelf" aria-label="最近观看">
+      <h2 class="shelf-title">最近观看</h2>
+      <div class="shelf-row">
+        {{range .RecentCards}}
+        {{$v := .Video}}
+        <a class="shelf-card" href="/watch/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and .Metadata .Metadata.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+            <div class="progress-bar" title="已看到 {{formatDuration .Progress.Position}} / {{formatDuration .Progress.Duration}}">
+              <div class="progress-fill" style="width: {{progressPercent .Progress.Position .Progress.Duration}}%"></div>
+            </div>
+          </div>
+          <div class="meta">
+            {{if and .Metadata .Metadata.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+            {{if .Progress.Completed}}
+            <p class="resume-hint">✓ 已看完</p>
+            {{else}}
+            <p class="resume-hint">▶ 看到 {{formatDuration .Progress.Position}}</p>
+            {{end}}
+          </div>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .CompletedCards}}
+    <section class="shelf" aria-label="已看完">
+      <h2 class="shelf-title">已看完</h2>
+      <div class="shelf-row">
+        {{range .CompletedCards}}
+        {{$v := .Video}}
+        <a class="shelf-card" href="/watch/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and .Metadata .Metadata.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+          </div>
+          <div class="meta">
+            {{if and .Metadata .Metadata.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+            <p class="resume-hint">✓ 已看完 · 累计 {{formatWatchHours .Progress.WatchTimeSeconds}}</p>
+          </div>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{end}}
+  </main>
+</body>
+</html>

@@ -898,3 +898,59 @@ button:disabled { opacity: .6; cursor: wait; }
 @media (max-width: 600px) {
   .shelf-card { flex-basis: 200px; }
 }
+
+/* ---- 观影统计页 ---- */
+.stats-heading { margin: 16px 0 4px; }
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+.stat-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+.stat-label { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
+.stat-value { color: var(--accent); font-size: 28px; font-weight: 700; margin: 0; }
+.stat-sub { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+
+.dist-section { margin: 24px 0; }
+.dist-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+}
+.dist-name {
+  flex: 0 0 120px;
+  color: var(--text);
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dist-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.dist-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+}
+.dist-count {
+  flex: 0 0 32px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  .dist-name { flex-basis: 84px; }
+}
