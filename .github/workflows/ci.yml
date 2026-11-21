@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go 构建与测试（含 ffmpeg / tesseract 集成测试）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      # 让转码/探针/多音轨/字幕/ABR/OCR 集成测试真实执行：
+      # - ffmpeg/ffprobe：转码、缩略图、内嵌字幕提取、HLS/ABR 集成测试
+      # - tesseract-ocr + eng/chi_sim 语言包：位图字幕（PGS/DVD）OCR 端到端测试
+      # 缺失时测试会 t.Skip，CI 必须装上，否则关键路径零覆盖。
+      - name: 安装媒体处理依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            tesseract-ocr \
+            tesseract-ocr-eng \
+            tesseract-ocr-chi-sim
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+          tesseract --version | head -1
+          tesseract --list-langs
+
+      - name: 格式检查（gofmt，无输出为通过）
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "以下文件未通过 gofmt："
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 构建
+        run: go build ./...
+
+      - name: 单元与集成测试（-race）
+        # 转码/OCR 用例耗时较长，给足超时；媒体类用例内部已有 90s 轮询上限。
+        run: go test -race -timeout=10m ./...
+
+  docker:
+    name: Docker 镜像构建验证
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 仅验证 Dockerfile 可正常构建，不推送镜像；与 Go 任务并行。
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建镜像（仅验证，不推送）
+        run: docker build -t vedio-website:ci .
