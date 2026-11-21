@@ -23,6 +23,9 @@ type Config struct {
 	TranscodeIdleTimeout time.Duration // 无客户端后多久停止转码进程（分片保留）
 	TranscodeHWAccel     string        // 硬件加速模式：空=CPU 软转（默认），"vaapi"=Intel 核显 VAAPI
 	TranscodeVAAPIDevice string        // VAAPI 渲染节点设备路径，默认 /dev/dri/renderD128
+	// 自适应（ABR）变体档位原始配置（逗号分隔），留空用默认 1080p,720p,480p；
+	// 由 media.ParseABRQualities 在装配层解析，config 包不反向依赖 media。
+	TranscodeABRQualitiesRaw string
 
 	// 位图字幕 OCR：把 PGS/DVD 等位图字幕经 tesseract 识别为 WebVTT（可选依赖）
 	OCREnabled   bool   // 是否启用位图字幕 OCR，tesseract 缺失时自动降级
@@ -66,12 +69,13 @@ func Load() *Config {
 		FFProbe:  getenv("FFPROBE_BIN", "ffprobe"),
 		DBPath:   os.Getenv("DB_PATH"),
 
-		TranscodeEnabled:     getenv("TRANSCODE_ENABLED", "true") != "false",
-		TranscodeDir:         getenv("TRANSCODE_DIR", "/data/transcode"),
-		TranscodeMax:         parseInt("TRANSCODE_MAX", 2),
-		TranscodeIdleTimeout: parseDuration("TRANSCODE_IDLE_TIMEOUT", 30*time.Minute),
-		TranscodeHWAccel:     os.Getenv("TRANSCODE_HWACCEL"),
-		TranscodeVAAPIDevice: getenv("TRANSCODE_VAAPI_DEVICE", "/dev/dri/renderD128"),
+		TranscodeEnabled:         getenv("TRANSCODE_ENABLED", "true") != "false",
+		TranscodeDir:             getenv("TRANSCODE_DIR", "/data/transcode"),
+		TranscodeMax:             parseInt("TRANSCODE_MAX", 2),
+		TranscodeIdleTimeout:     parseDuration("TRANSCODE_IDLE_TIMEOUT", 30*time.Minute),
+		TranscodeHWAccel:         os.Getenv("TRANSCODE_HWACCEL"),
+		TranscodeVAAPIDevice:     getenv("TRANSCODE_VAAPI_DEVICE", "/dev/dri/renderD128"),
+		TranscodeABRQualitiesRaw: os.Getenv("TRANSCODE_ABR_QUALITIES"),
 
 		OCREnabled:   getenv("OCR_ENABLED", "true") != "false",
 		TesseractBin: getenv("TESSERACT_BIN", "tesseract"),

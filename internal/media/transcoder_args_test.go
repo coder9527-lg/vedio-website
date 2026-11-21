@@ -163,6 +163,167 @@ func TestBuildFFmpegArgsMultiAudioKept(t *testing.T) {
 	}
 }
 
+// TestSelectABRVariants 验证 ABR 变体按源高度过滤且不放大，异常输入有兜底。
+func TestSelectABRVariants(t *testing.T) {
+	cases := []struct {
+		name        string
+		source      int
+		wantCount   int
+		wantHeights []int
+	}{
+		{name: "1080源三档全开", source: 1080, wantCount: 3, wantHeights: []int{1080, 720, 480}},
+		{name: "720源无1080档", source: 720, wantCount: 2, wantHeights: []int{720, 480}},
+		{name: "360源兜底最低档", source: 360, wantCount: 1, wantHeights: []int{480}},
+		{name: "零高度兜底", source: 0, wantCount: 1, wantHeights: []int{480}},
+		{name: "负高度兜底", source: -100, wantCount: 1, wantHeights: []int{480}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := selectABRVariants(tc.source, nil) // nil 走默认三档
+			if len(got) != tc.wantCount {
+				t.Fatalf("变体数 = %d，期望 %d（%+v）", len(got), tc.wantCount, got)
+			}
+			for i, wantH := range tc.wantHeights {
+				if got[i].Height != wantH {
+					t.Errorf("第 %d 个变体高度 = %d，期望 %d", i, got[i].Height, wantH)
+				}
+			}
+		})
+	}
+}
+
+// TestParseABRQualities 验证 TRANSCODE_ABR_QUALITIES 的白名单过滤、去重、排序与回退。
+func TestParseABRQualities(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{name: "空串回退默认", raw: "", want: []string{Quality1080p, Quality720p, Quality480p}},
+		{name: "弱NAS两档", raw: "720p,480p", want: []string{Quality720p, Quality480p}},
+		{name: "单值退化单变体", raw: "480p", want: []string{Quality480p}},
+		{name: "乱序仍按高到低", raw: "480p,1080p", want: []string{Quality1080p, Quality480p}},
+		{name: "去重", raw: "720p,720p,480p", want: []string{Quality720p, Quality480p}},
+		{name: "含非法值被忽略", raw: "4k,720p,garbage", want: []string{Quality720p}},
+		{name: "全非法回退默认", raw: "4k,8k", want: []string{Quality1080p, Quality720p, Quality480p}},
+		{name: "带空格容错", raw: " 720p , 480p ", want: []string{Quality720p, Quality480p}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ParseABRQualities(tc.raw)
+			if len(got) != len(tc.want) {
+				t.Fatalf("解析 %q 得 %v，期望 %v", tc.raw, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("第 %d 档 = %q，期望 %q（整体 %v）", i, got[i], tc.want[i], got)
+				}
+			}
+		})
+	}
+}
+
+// TestSelectABRVariantsConfigured 验证自定义变体档位下的源高度过滤与不放大。
+func TestSelectABRVariantsConfigured(t *testing.T) {
+	// 配置仅 720p/480p：1080 源也只产两档
+	got := selectABRVariants(1080, []string{Quality720p, Quality480p})
+	if len(got) != 2 || got[0].Height != 720 || got[1].Height != 480 {
+		t.Fatalf("自定义两档过滤异常: %+v", got)
+	}
+	// 配置档位全部高于源（仅 1080p，源 720）：兜底 480p 单变体
+	got = selectABRVariants(720, []string{Quality1080p})
+	if len(got) != 1 || got[0].Height != 480 {
+		t.Fatalf("全高于源应兜底 480p，实际 %+v", got)
+	}
+}
+
+// abrProfileCases 覆盖软转与 VAAPI 两套 ABR 编码路径。
+func abrProfileCases() []struct {
+	name    string
+	profile encodeProfile
+} {
+	return []struct {
+		name    string
+		profile encodeProfile
+	}{
+		{"软转", encodeProfile{}},
+		{"VAAPI", encodeProfile{hwaccel: "vaapi", vaapiDevice: "/dev/dri/renderD128"}},
+	}
+}
+
+// TestBuildABRFFmpegArgs 验证自适应会话的多变体参数布局（软转/VAAPI）。
+func TestBuildABRFFmpegArgs(t *testing.T) {
+	outDir := t.TempDir()
+	variants := selectABRVariants(1080, nil) // 1080p/720p/480p 三变体
+	if len(variants) != 3 {
+		t.Fatalf("1080 源应得 3 个变体，实际 %d", len(variants))
+	}
+
+	for _, p := range abrProfileCases() {
+		t.Run(p.name, func(t *testing.T) {
+			args := buildABRFFmpegArgs("in.mkv", outDir, nil, variants, p.profile)
+			joined := strings.Join(args, " ")
+
+			// split 成三路且逐路缩放，三个目标高度都在滤镜里
+			if !strings.Contains(joined, "split=3") {
+				t.Errorf("filter_complex 缺少 split=3: %s", joined)
+			}
+			for _, h := range []int{1080, 720, 480} {
+				if !strings.Contains(joined, "min(ih\\,"+strconv.Itoa(h)+")") {
+					t.Errorf("滤镜缺少高度 %d 的缩放: %s", h, joined)
+				}
+			}
+
+			// 三路视频 map 标签
+			containsAll(t, args, "-map", "[v0]", "-map", "[v1]", "-map", "[v2]")
+
+			// 逐路质量参数
+			if p.profile.hwaccel == "vaapi" {
+				containsAll(t, args, "-c:v", "h264_vaapi",
+					"-b:v:0", "5000k", "-b:v:1", "2800k", "-b:v:2", "1400k")
+				// 硬件 flag 必须在 -i 之前
+				inputIdx := indexOf(args, "-i")
+				for _, flag := range []string{"-hwaccel", "-init_hw_device", "-hwaccel_device", "-hwaccel_output_format"} {
+					idx := indexOf(args, flag)
+					if idx < 0 || idx > inputIdx {
+						t.Fatalf("%s 必须存在且位于 -i 之前，参数: %v", flag, args)
+					}
+				}
+			} else {
+				containsAll(t, args, "-c:v", "libx264",
+					"-crf:0", "20", "-crf:1", "23", "-crf:2", "26")
+			}
+
+			// ABR 专属：master、多变体 var_stream_map、out-%v 命名
+			containsAll(t, args, "-master_pl_name", hlsMasterName, "-var_stream_map",
+				"v:0,agroup:aud v:1,agroup:aud v:2,agroup:aud a:0,agroup:aud,name:a0",
+				"-hls_segment_filename", filepath.Join(outDir, "out-%v-%05d.ts"),
+				filepath.Join(outDir, "out-%v.m3u8"))
+
+			// 公共约束
+			containsAll(t, args, "-sn", "-c:a", "aac", "-b:a", "128k", "-ac", "2")
+			// 不得混入单档布局
+			containsNone(t, args, "seg-%05d.ts", hlsPlaylistName)
+		})
+	}
+}
+
+// TestBuildABRFFmpegArgsMultiAudio 验证自适应会话多音轨映射与 var_stream_map 下标。
+func TestBuildABRFFmpegArgsMultiAudio(t *testing.T) {
+	outDir := t.TempDir()
+	variants := selectABRVariants(720, nil) // 两变体：720p/480p
+	tracks := []AudioTrack{
+		{Index: 1, Language: "chi", Default: true},
+		{Index: 2, Language: "eng"},
+	}
+	args := buildABRFFmpegArgs("in.mkv", outDir, tracks, variants, encodeProfile{})
+	// 两路视频 + 两路音频 map
+	containsAll(t, args, "-map", "[v0]", "-map", "[v1]", "-map", "0:1?", "-map", "0:2?")
+	// var_stream_map 的 a:N 按音频类型内序号编号，两路音频即 a:0 / a:1
+	containsAll(t, args, "-var_stream_map",
+		"v:0,agroup:aud v:1,agroup:aud a:0,agroup:aud,name:a0,default:yes a:1,agroup:aud,name:a1")
+}
+
 // TestSetHWAccelFallback 验证设备缺失与未知模式都回退软转。
 func TestSetHWAccelFallback(t *testing.T) {
 	tc, err := NewTranscoder(t.TempDir(), "ffmpeg", "ffprobe", 1, 0)

@@ -81,11 +81,47 @@ var qualitySpecs = map[string]QualitySpec{
 }
 
 // NormalizeQuality 校验清晰度档位，非法值（含空串）回退默认 720p。
+// 注意：自适应档位 QualityAuto 是独立会话类型，不在此白名单内，由上层单独识别。
 func NormalizeQuality(q string) string {
 	if _, ok := qualitySpecs[q]; ok {
 		return q
 	}
 	return Quality720p
+}
+
+// QualityAuto 是自适应（ABR）会话标识：单进程同时产出多个视频变体与 master 播放列表，
+// 由 hls.js / Safari 按带宽自动选档，与单档手动转码走独立会话目录，互不影响。
+const QualityAuto = "auto"
+
+// defaultABRQualities 是自适应会话默认产出的变体档位（高→低有序）。
+var defaultABRQualities = []string{Quality1080p, Quality720p, Quality480p}
+
+// selectABRVariants 按源视频高度与配置的变体档位过滤 ABR 变体，遵循「不放大源」：
+// 仅保留目标高度不超过源高度的档位；qualities 为空时用默认三档；源高度异常（≤0）
+// 或全部档位都高于源时，兜底返回最低 480p 单变体（实际缩放仍由 min(ih,h) 约束，不会放大）。
+func selectABRVariants(sourceHeight int, qualities []string) []QualitySpec {
+	if len(qualities) == 0 {
+		qualities = defaultABRQualities
+	}
+	if sourceHeight <= 0 {
+		return []QualitySpec{qualitySpecs[Quality480p]}
+	}
+	var variants []QualitySpec
+	for _, name := range qualities {
+		spec, ok := qualitySpecs[name]
+		if ok && spec.Height <= sourceHeight {
+			variants = append(variants, spec)
+		}
+	}
+	if len(variants) == 0 {
+		return []QualitySpec{qualitySpecs[Quality480p]}
+	}
+	return variants
+}
+
+// abrVariantSpecs 返回当前转码器配置下、给定源高度实际启用的 ABR 变体。
+func (t *Transcoder) abrVariantSpecs(sourceHeight int) []QualitySpec {
+	return selectABRVariants(sourceHeight, t.abrQualities)
 }
 
 // sessionKey 生成会话复合键：同一视频的不同档位各自独立转码与缓存。
@@ -119,9 +155,10 @@ type Transcoder struct {
 	ffprobe       string
 	maxConcurrent int
 	idleTimeout   time.Duration
-	ocr           *OCRer // 可选：位图字幕（PGS/DVD 等）OCR 转 WebVTT，nil 则跳过位图轨
-	hwaccel       string // 硬件加速模式：空=CPU 软转（默认），"vaapi"=VAAPI
-	vaapiDevice   string // VAAPI 渲染节点路径（如 /dev/dri/renderD128）
+	ocr           *OCRer   // 可选：位图字幕（PGS/DVD 等）OCR 转 WebVTT，nil 则跳过位图轨
+	hwaccel       string   // 硬件加速模式：空=CPU 软转（默认），"vaapi"=VAAPI
+	vaapiDevice   string   // VAAPI 渲染节点路径（如 /dev/dri/renderD128）
+	abrQualities  []string // ABR 自适应会话产出的变体档位（高→低有序），空则用 defaultABRQualities
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -137,6 +174,39 @@ type Transcoder struct {
 // 「仅识别不提取」的原有行为。必须在首个转码会话启动前调用。
 func (t *Transcoder) SetOCRer(ocr *OCRer) {
 	t.ocr = ocr
+}
+
+// ParseABRQualities 解析 TRANSCODE_ABR_QUALITIES 配置（逗号分隔的档位名）。
+// 仅保留三档白名单内的合法值并去重，按默认高→低顺序输出；全部非法或为空时
+// 回退默认三档，保证弱 NAS 配「720p,480p」、单值退化单变体等用法可控。
+func ParseABRQualities(raw string) []string {
+	picked := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.TrimSpace(part)
+		if _, ok := qualitySpecs[name]; ok {
+			picked[name] = true
+		}
+	}
+	var out []string
+	for _, name := range defaultABRQualities { // 复用默认顺序，避免配置顺序影响变体排列
+		if picked[name] {
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), defaultABRQualities...)
+	}
+	return out
+}
+
+// SetABRQualities 配置 ABR 自适应会话产出的变体档位。必须在首个转码会话启动前调用；
+// 传 nil/空切片时沿用默认三档。
+func (t *Transcoder) SetABRQualities(qualities []string) {
+	if len(qualities) == 0 {
+		t.abrQualities = append([]string(nil), defaultABRQualities...)
+		return
+	}
+	t.abrQualities = append([]string(nil), qualities...)
 }
 
 // SetHWAccel 配置硬件加速模式。mode 为空表示 CPU 软转（默认）；
@@ -212,6 +282,7 @@ type sessionStatus struct {
 	State        string          `json:"state"` // idle | starting | running | done | failed
 	HasPlaylist  bool            `json:"hasPlaylist"`
 	Segments     int             `json:"segments"`
+	Quality      string          `json:"quality"`    // 会话档位（1080p/720p/480p 或 auto 自适应）
 	MultiAudio   bool            `json:"multiAudio"` // 是否产出 master.m3u8 多音轨布局
 	AudioTracks  []AudioTrack    `json:"audioTracks,omitempty"`
 	EmbeddedSubs []SubtitleTrack `json:"embeddedSubtitles,omitempty"` // 内嵌字幕轨（含位图轨）
@@ -225,7 +296,11 @@ func (t *Transcoder) Ensure(v *Video, quality string) (*session, error) {
 	if !t.Available() {
 		return nil, ErrTranscoderDisabled
 	}
-	quality = NormalizeQuality(quality)
+	// auto 是独立的自适应会话类型，不进普通档位的归一化白名单；
+	// 其余非法值仍由 NormalizeQuality 回退 720p。
+	if quality != QualityAuto {
+		quality = NormalizeQuality(quality)
+	}
 	key := sessionKey(v.ID, quality)
 
 	t.mu.Lock()
@@ -351,7 +426,8 @@ func (t *Transcoder) run(sess *session) {
 
 	// 多音轨：ffmpeg 6.x 不会把 var_stream_map 的 name 写入 master 的 EXT-X-MEDIA NAME
 	//（始终是 audio_N），后台轮询重写为友好音轨名（国语/English/音轨 2）。
-	if len(tracks) > 1 {
+	// ABR 会话无论音轨数都要重写：除音轨名外还需剔除 master 末尾的纯音频 STREAM-INF。
+	if len(tracks) > 1 || sess.quality == QualityAuto {
 		stopRewrite := make(chan struct{})
 		go t.rewriteMasterNames(sess, tracks, stopRewrite)
 		defer close(stopRewrite)
@@ -474,13 +550,126 @@ func buildFFmpegArgs(videoPath, outDir string, tracks []AudioTrack, p encodeProf
 }
 
 // buildArgs 是 buildFFmpegArgs 的实例薄封装，注入当前转码器的硬件加速与清晰度档位。
+// auto 自适应会话改走多变体 ABR 参数：先探测源高度过滤变体；探测失败时回退到
+// 现有 720p 单档参数，保证任何情况下都能出流。
 func (t *Transcoder) buildArgs(sess *session, tracks []AudioTrack) []string {
-	return buildFFmpegArgs(sess.video.AbsPath(), sess.dir, tracks,
-		encodeProfile{
-			hwaccel:     t.hwaccel,
-			vaapiDevice: t.vaapiDevice,
-			quality:     qualitySpecs[sess.quality],
-		})
+	profile := encodeProfile{
+		hwaccel:     t.hwaccel,
+		vaapiDevice: t.vaapiDevice,
+		quality:     qualitySpecs[sess.quality],
+	}
+	if sess.quality != QualityAuto {
+		return buildFFmpegArgs(sess.video.AbsPath(), sess.dir, tracks, profile)
+	}
+
+	height, err := ProbeVideoHeight(t.ffprobe, sess.video.AbsPath())
+	if err != nil {
+		log.Printf("ABR 探测源高度失败 %s，回退 720p 单档: %v", sess.video.RelPath, err)
+		profile.quality = qualitySpecs[Quality720p]
+		return buildFFmpegArgs(sess.video.AbsPath(), sess.dir, tracks, profile)
+	}
+	variants := t.abrVariantSpecs(height)
+	log.Printf("ABR 会话 %s 源高度 %d，启用 %d 个变体", sess.video.RelPath, height, len(variants))
+	return buildABRFFmpegArgs(sess.video.AbsPath(), sess.dir, tracks, variants, profile)
+}
+
+// buildABRFFmpegArgs 为自适应（ABR）会话生成单进程多视频变体的 ffmpeg 参数：
+// 一次编码产出 len(variants) 路视频流（各自缩放高度与 CRF/码率）加共享音频，
+// 由 HLS master 播放列表聚合，播放器按带宽在变体间切换。
+//   - 软转：filter_complex split 后逐路 scale，每路用 -crf:<i> 独立质量；
+//   - VAAPI：逐路 scale_vaapi，每路用 -b:v:<i> 独立码率（硬编不支持 CRF）；
+//   - 音频只编码一份（多音轨时每路各一份），各视频变体在 var_stream_map 引用同一音频组；
+//   - 缩放同样遵循不放大源（min(ih\,h)）；始终 -sn，内嵌字幕走共享 sidecar。
+func buildABRFFmpegArgs(videoPath, outDir string, tracks []AudioTrack, variants []QualitySpec, p encodeProfile) []string {
+	n := len(variants)
+
+	// filter_complex：把源视频 split 成 N 路，再逐路缩放并命名 [v0]..[vN-1]
+	var filters []string
+	splits := make([]string, n)
+	for i := range variants {
+		splits[i] = fmt.Sprintf("[s%d]", i)
+	}
+	filters = append(filters, "[0:v]split="+strconv.Itoa(n)+strings.Join(splits, ""))
+	for i, spec := range variants {
+		if p.hwaccel == "vaapi" {
+			filters = append(filters, fmt.Sprintf("[s%d]scale_vaapi=w=-2:h=min(ih\\,%d):format=nv12[v%d]", i, spec.Height, i))
+		} else {
+			filters = append(filters, fmt.Sprintf("[s%d]scale=-2:min(ih\\,%d)[v%d]", i, spec.Height, i))
+		}
+	}
+
+	args := []string{"-y"}
+	if p.hwaccel == "vaapi" {
+		// 硬件初始化参数必须位于 -i 之前
+		args = append(args,
+			"-hwaccel", "vaapi",
+			"-init_hw_device", "vaapi=va:"+p.vaapiDevice,
+			"-hwaccel_device", "va",
+			"-hwaccel_output_format", "vaapi",
+		)
+	}
+	args = append(args, "-i", videoPath)
+	args = append(args, "-filter_complex", strings.Join(filters, ";"))
+
+	// 视频输出流 v:0..v:N-1，逐路映射缩放后的标签
+	for i := range variants {
+		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
+	}
+	// 音频输出流从 v:N 开始依次排列；无音轨时用 0:a:0? 占位且不致命
+	if len(tracks) == 0 {
+		args = append(args, "-map", "0:a:0?")
+	} else {
+		for _, tr := range tracks {
+			args = append(args, "-map", fmt.Sprintf("0:%d?", tr.Index))
+		}
+	}
+
+	// 编码器与逐路视频质量参数
+	if p.hwaccel == "vaapi" {
+		args = append(args, "-c:v", "h264_vaapi")
+		for i, spec := range variants {
+			args = append(args, fmt.Sprintf("-b:v:%d", i), spec.VideoBitrate)
+		}
+	} else {
+		args = append(args, "-c:v", "libx264", "-preset", "veryfast")
+		for i, spec := range variants {
+			args = append(args, fmt.Sprintf("-crf:%d", i), strconv.Itoa(spec.CRF))
+		}
+	}
+	args = append(args,
+		"-c:a", "aac", "-b:a", "128k", "-ac", "2",
+		"-sn",
+		"-f", "hls",
+		"-hls_time", fmt.Sprintf("%d", hlsSegmentTime),
+		"-hls_flags", "append_list+independent_segments",
+		"-hls_list_size", "0",
+		"-master_pl_name", hlsMasterName,
+	)
+
+	// var_stream_map：N 个视频变体引用同一音频组，音频变体按输出流序号 a:N.. 排列
+	var streamMap []string
+	for i := range variants {
+		streamMap = append(streamMap, fmt.Sprintf("v:%d,agroup:%s", i, hlsAudioGroup))
+	}
+	if len(tracks) <= 1 {
+		// 单音轨（含无音轨占位）：var_stream_map 的 a:N 按音频流类型内序号编号，
+		// 与前面视频流数量无关，第一路音频即 a:0。
+		streamMap = append(streamMap, fmt.Sprintf("a:0,agroup:%s,name:a0", hlsAudioGroup))
+	} else {
+		for i, tr := range tracks {
+			entry := fmt.Sprintf("a:%d,agroup:%s,name:a%d", i, hlsAudioGroup, i)
+			if tr.Default {
+				entry += ",default:yes"
+			}
+			streamMap = append(streamMap, entry)
+		}
+	}
+	args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
+	args = append(args,
+		"-hls_segment_filename", filepath.Join(outDir, "out-%v-%05d.ts"),
+		filepath.Join(outDir, "out-%v.m3u8"),
+	)
+	return args
 }
 
 // masterAudioLineRE 匹配 master 播放列表中的 EXT-X-MEDIA 音频行，替换 NAME 属性。
@@ -490,27 +679,32 @@ var masterAudioLineRE = regexp.MustCompile(`(EXT-X-MEDIA:TYPE=AUDIO,.*?)NAME="[^
 // ffmpeg 以 event 语义持续覆写该文件，因此不能只改一次；进程结束（stop 通道关闭）后退出。
 func (t *Transcoder) rewriteMasterNames(sess *session, tracks []AudioTrack, stop <-chan struct{}) {
 	master := filepath.Join(sess.dir, hlsMasterName)
+	isAuto := sess.quality == QualityAuto
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-stop:
-			t.rewriteOnce(master, tracks)
+			t.rewriteOnce(master, tracks, isAuto)
 			return
 		case <-ticker.C:
-			t.rewriteOnce(master, tracks)
+			t.rewriteOnce(master, tracks, isAuto)
 		}
 	}
 }
 
 // rewriteOnce 执行单次 master 重写；文件尚未生成时静默跳过。
-func (t *Transcoder) rewriteOnce(master string, tracks []AudioTrack) {
+//   - 多音轨：把 audio_N 的 NAME 替换为友好音轨名；
+//   - ABR（isAuto）：ffmpeg 会额外生成一条无 RESOLUTION 的纯音频 EXT-X-STREAM-INF，
+//     hls.js 不需要它（保留会出现一个「纯音频清晰度」），连同下一行 URI 一并剔除。
+func (t *Transcoder) rewriteOnce(master string, tracks []AudioTrack, isAuto bool) {
 	raw, err := os.ReadFile(master)
 	if err != nil {
 		return
 	}
+	content := string(raw)
 	i := 0
-	rewritten := masterAudioLineRE.ReplaceAllStringFunc(string(raw), func(line string) string {
+	content = masterAudioLineRE.ReplaceAllStringFunc(content, func(line string) string {
 		label := "音轨 " + strconv.Itoa(i+1)
 		if i < len(tracks) && tracks[i].Label != "" {
 			label = tracks[i].Label
@@ -518,9 +712,34 @@ func (t *Transcoder) rewriteOnce(master string, tracks []AudioTrack) {
 		i++
 		return masterAudioLineRE.ReplaceAllString(line, `${1}NAME="`+label+`"`)
 	})
-	if rewritten != string(raw) {
-		_ = os.WriteFile(master, []byte(rewritten), 0o644)
+	if isAuto {
+		content = stripAudioOnlyStreamInf(content)
 	}
+	if content != string(raw) {
+		_ = os.WriteFile(master, []byte(content), 0o644)
+	}
+}
+
+// stripAudioOnlyStreamInf 剔除 master 中无 RESOLUTION 的纯音频 EXT-X-STREAM-INF
+// 条目及其紧随的 URI 行；带 RESOLUTION 的视频变体条目保持不变。
+func stripAudioOnlyStreamInf(content string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	for j := 0; j < len(lines); j++ {
+		line := lines[j]
+		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") && !strings.Contains(line, "RESOLUTION") {
+			// 跳过该 STREAM-INF 行；若下一行是相对 URI（非标签、非空）也一并跳过
+			if j+1 < len(lines) {
+				next := lines[j+1]
+				if next != "" && !strings.HasPrefix(next, "#") {
+					j++
+				}
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // extractSubtitles 把内嵌字幕逐路导出为转码目录下的 sub-<序号>.vtt。
@@ -597,11 +816,14 @@ func normalizeVTTTimestamps(raw []byte) []byte {
 }
 
 // Get 按视频 ID 与清晰度档位查找会话（不存在返回 nil）。
-// quality 非法时按默认 720p 归一化，与 Ensure 的键规则保持一致。
+// quality 非法时按默认 720p 归一化，与 Ensure 的键规则保持一致；auto 独立识别。
 func (t *Transcoder) Get(videoID, quality string) *session {
+	if quality != QualityAuto {
+		quality = NormalizeQuality(quality)
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.sessions[sessionKey(videoID, NormalizeQuality(quality))]
+	return t.sessions[sessionKey(videoID, quality)]
 }
 
 // SubAssetPath 返回视频级共享内嵌字幕（subs/sub-N.vtt）的磁盘路径。
@@ -738,6 +960,7 @@ func (s *session) Status() sessionStatus {
 	st := sessionStatus{
 		State:        s.state.String(),
 		HasPlaylist:  s.hasPlaylistLocked() || multi,
+		Quality:      s.quality,
 		MultiAudio:   multi,
 		AudioTracks:  append([]AudioTrack(nil), s.audioTracks...),
 		EmbeddedSubs: append([]SubtitleTrack(nil), s.subtitleTracks...),
@@ -782,6 +1005,26 @@ func (s *session) PlaylistPath() (string, error) {
 		return "", err
 	}
 	return p, nil
+}
+
+// PlaylistContent 返回入口播放列表的字节内容。
+// auto（ABR）会话的 master 由 ffmpeg 在转码过程中反复覆写，后台重写器的轮询间隙
+// 可能短暂残留无 RESOLUTION 的纯音频 STREAM-INF，因此在读取出口再做一次确定性剔除，
+// 保证播放器任何时刻拿到的 master 都不含纯音频清晰度；不落盘、不影响 ffmpeg 写文件。
+// 其余会话直接返回磁盘原始内容。
+func (s *session) PlaylistContent() ([]byte, error) {
+	p, err := s.PlaylistPath()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return nil, err
+	}
+	if s.quality == QualityAuto {
+		return []byte(stripAudioOnlyStreamInf(string(raw))), nil
+	}
+	return raw, nil
 }
 
 // hlsAssetName 白名单：
