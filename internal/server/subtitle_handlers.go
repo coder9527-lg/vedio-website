@@ -3,14 +3,135 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/coder9527-lg/vedio-website/internal/media"
 )
+
+// maxSubtitleUpload 是单个上传字幕的体积上限（10 MiB）。
+const maxSubtitleUpload = 10 << 20
+
+// uploadLangs 是上传时允许的语言标签白名单：Token 为落盘文件名中的语言段
+// （须能被 media.resolveLang 解析），Label 为播放页下拉展示名。
+var uploadLangs = []struct {
+	Token, Label string
+}{
+	{"zh-Hans", "简体中文"}, {"zh-Hant", "繁体中文"}, {"en", "English"},
+	{"ja", "日本語"}, {"ko", "한국어"}, {"fr", "Français"}, {"de", "Deutsch"},
+	{"es", "Español"}, {"ru", "Русский"}, {"it", "Italiano"}, {"pt", "Português"},
+	{"th", "ไทย"}, {"vi", "Tiếng Việt"}, {"ar", "العربية"}, {"hi", "हिन्दी"},
+}
+
+// langAllowed 判断语言 token 是否在上传白名单内（白名单字符本身即安全，杜绝路径注入）。
+func langAllowed(lang string) bool {
+	for _, l := range uploadLangs {
+		if l.Token == lang {
+			return true
+		}
+	}
+	return false
+}
+
+// handleSubtitleUpload 接收 multipart 上传的字幕文件（字段 file 与 lang），
+// 按「视频名.语言.ext」规范命名落到视频同目录，再热刷新字幕索引。
+func (s *Server) handleSubtitleUpload(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.library.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "video not found"})
+		return
+	}
+	// maxMemory 仅决定内存/临时文件分界，体积上限在读取后二次校验
+	if err := r.ParseMultipartForm(maxSubtitleUpload); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无法解析上传表单"})
+		return
+	}
+	lang := r.FormValue("lang")
+	if !langAllowed(lang) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不支持的语言标签"})
+		return
+	}
+	file, info, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少字幕文件"})
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(info.Filename))
+	if !media.IsSubtitleExt("x" + ext) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不支持的字幕格式，仅支持 srt/vtt/ass/ssa"})
+		return
+	}
+
+	// 多读 1 字节用于判断是否超限，避免信任客户端声明的大小
+	data, err := io.ReadAll(io.LimitReader(file, maxSubtitleUpload+1))
+	if err != nil {
+		log.Printf("读取上传字幕失败: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "读取字幕失败"})
+		return
+	}
+	if len(data) > maxSubtitleUpload {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "字幕文件过大（上限 10MB）"})
+		return
+	}
+
+	dir := filepath.Dir(v.AbsPath())
+	target := filepath.Join(dir, v.Name+"."+lang+ext)
+	// 同名冲突：追加 .2/.3 数字后缀，不覆盖已有字幕
+	for n := 2; ; n++ {
+		if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		target = filepath.Join(dir, v.Name+"."+lang+"."+strconv.Itoa(n)+ext)
+	}
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		log.Printf("写入字幕失败 %s: %v", target, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "字幕落盘失败"})
+		return
+	}
+
+	s.library.RefreshSubtitles(v.ID)
+	subs := s.library.Subtitles(v.ID)
+	if subs == nil {
+		subs = []*media.Subtitle{}
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"status": "ok", "subtitles": subs})
+}
+
+// handleSubtitleDelete 删除一个外挂字幕文件并热刷新索引。
+// 仅允许删除 library 已登记、且位于媒体根目录之内的字幕，防御路径穿越。
+func (s *Server) handleSubtitleDelete(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.library.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "video not found"})
+		return
+	}
+	sub, ok := s.library.GetSubtitle(v.ID, r.PathValue("sid"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "字幕不存在"})
+		return
+	}
+	rel, err := filepath.Rel(s.library.Root(), sub.AbsPath())
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "非法的字幕路径"})
+		return
+	}
+	if err := os.Remove(sub.AbsPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("删除字幕失败 %s: %v", sub.RelPath, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "删除字幕失败"})
+		return
+	}
+	s.library.RefreshSubtitles(v.ID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
 
 // handleSubtitleList 返回视频的外挂字幕列表 JSON，供播放页渲染字幕菜单与 <track>。
 func (s *Server) handleSubtitleList(w http.ResponseWriter, r *http.Request) {

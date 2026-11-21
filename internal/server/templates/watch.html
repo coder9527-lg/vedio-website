@@ -46,13 +46,20 @@
     {{end}}
     <div class="player-controls" id="player-controls">
       {{if .TranscodeOn}}
-      <div class="track-menu" id="sub-menu-wrap" {{if not .Subtitles}}hidden{{end}}>
+      <div class="track-menu" id="sub-menu-wrap">
         <button type="button" id="sub-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
           字幕 <span class="caret">▾</span>
         </button>
         <div class="track-dropdown" id="sub-dropdown" role="menu"></div>
       </div>
       {{else if .Subtitles}}
+      <div class="track-menu" id="sub-menu-wrap">
+        <button type="button" id="sub-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
+          字幕 <span class="caret">▾</span>
+        </button>
+        <div class="track-dropdown" id="sub-dropdown" role="menu"></div>
+      </div>
+      {{else}}
       <div class="track-menu" id="sub-menu-wrap">
         <button type="button" id="sub-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
           字幕 <span class="caret">▾</span>
@@ -493,7 +500,7 @@
 
       function buildMenu() {
         const list = tracks();
-        wrap.hidden = list.length === 0;
+        // 菜单常显：无字幕时仍保留「管理字幕…」入口，方便直接上传
         dropdown.innerHTML = '';
         const off = document.createElement('button');
         off.type = 'button';
@@ -510,6 +517,17 @@
           item.addEventListener('click', () => select(track.label, item));
           dropdown.appendChild(item);
         });
+
+        // 固定入口：打开字幕管理弹窗（上传/删除外挂字幕）
+        const mgr = document.createElement('button');
+        mgr.type = 'button';
+        mgr.className = 'track-item sub-mgr-entry';
+        mgr.textContent = '管理字幕…';
+        mgr.addEventListener('click', () => {
+          dropdown.classList.remove('open');
+          window.dispatchEvent(new CustomEvent('open-sub-mgr'));
+        });
+        dropdown.appendChild(mgr);
       }
       function select(label, btnEl) {
         currentLabel = label;
@@ -586,6 +604,16 @@
           item.addEventListener('click', () => select(track.label, item));
           dropdown.appendChild(item);
         });
+        // 固定入口：打开字幕管理弹窗
+        const mgr = document.createElement('button');
+        mgr.type = 'button';
+        mgr.className = 'track-item sub-mgr-entry';
+        mgr.textContent = '管理字幕…';
+        mgr.addEventListener('click', () => {
+          dropdown.classList.remove('open');
+          window.dispatchEvent(new CustomEvent('open-sub-mgr'));
+        });
+        dropdown.appendChild(mgr);
       }
       function select(label, btnEl) {
         tracks().forEach((t) => { t.mode = (t.label === label) ? 'showing' : 'disabled'; });
@@ -603,6 +631,36 @@
         if (!dropdown.contains(e.target)) { dropdown.classList.remove('open'); }
       });
       buildMenu();
+    })();
+  </script>
+  {{else}}
+  <script>
+    // 既无转码也无外挂字幕：菜单常显，点击直接打开字幕管理弹窗（用于上传首个字幕）
+    (() => {
+      const btn = document.getElementById('sub-menu-btn');
+      const dropdown = document.getElementById('sub-dropdown');
+      if (!btn || !dropdown) return;
+      dropdown.innerHTML = '';
+      const mgr = document.createElement('button');
+      mgr.type = 'button';
+      mgr.className = 'track-item sub-mgr-entry';
+      mgr.textContent = '管理字幕…';
+      mgr.addEventListener('click', () => {
+        dropdown.classList.remove('open');
+        window.dispatchEvent(new CustomEvent('open-sub-mgr'));
+      });
+      dropdown.appendChild(mgr);
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+        btn.setAttribute('aria-expanded', dropdown.classList.contains('open'));
+      });
+      document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target)) {
+          dropdown.classList.remove('open');
+          btn.setAttribute('aria-expanded', 'false');
+        }
+      });
     })();
   </script>
   {{end}}
@@ -1696,5 +1754,164 @@
     })();
   </script>
   {{end}}
+
+  <!-- 字幕管理弹窗：上传外挂字幕 / 删除已有外挂字幕（不依赖持久化，始终可用） -->
+  <div class="scrape-modal pl-modal" id="sub-mgr-modal" hidden>
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="sub-mgr-title">
+      <div class="scrape-dialog-head">
+        <h3 id="sub-mgr-title">字幕管理</h3>
+        <button type="button" class="scrape-close" data-sub-mgr-close aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <div class="share-form-row">
+          <label for="sub-upload-lang">字幕语言</label>
+          <select id="sub-upload-lang" class="pl-rename-input">
+            <option value="zh-Hans" selected>简体中文</option>
+            <option value="zh-Hant">繁体中文</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+            <option value="es">Español</option>
+            <option value="ru">Русский</option>
+            <option value="it">Italiano</option>
+            <option value="pt">Português</option>
+            <option value="th">ไทย</option>
+            <option value="vi">Tiếng Việt</option>
+            <option value="ar">العربية</option>
+            <option value="hi">हिन्दी</option>
+          </select>
+        </div>
+        <div class="share-form-row">
+          <label for="sub-upload-file">字幕文件（srt / vtt / ass / ssa，上限 10MB）</label>
+          <input type="file" id="sub-upload-file" accept=".srt,.vtt,.ass,.ssa">
+        </div>
+        <button type="button" id="sub-upload-btn">上传字幕</button>
+        <h4 class="share-list-title">当前外挂字幕</h4>
+        <div class="pl-pick-list" id="sub-mgr-list">
+          <div class="sub-mgr-empty">加载中…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="skip-toast" id="sub-mgr-toast" role="status" aria-live="polite" hidden></div>
+  <script>
+    (() => {
+      const videoId = {{printf "%q" .Video.ID}};
+      const modal = document.getElementById('sub-mgr-modal');
+      const listBox = document.getElementById('sub-mgr-list');
+      const langSel = document.getElementById('sub-upload-lang');
+      const fileInput = document.getElementById('sub-upload-file');
+      const uploadBtn = document.getElementById('sub-upload-btn');
+      const toast = document.getElementById('sub-mgr-toast');
+      const apiURL = '/api/v1/videos/' + videoId + '/subtitles';
+      const allowedExt = ['srt', 'vtt', 'ass', 'ssa'];
+
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.hidden = false;
+        clearTimeout(showToast._t);
+        showToast._t = setTimeout(() => { toast.hidden = true; }, 2600);
+      }
+
+      async function subFetch(url, options) {
+        const res = await fetch(url, options);
+        if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+        if (!res.ok) {
+          let msg = 'HTTP ' + res.status;
+          try { const d = await res.json(); if (d.error) msg = d.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        return res.json();
+      }
+
+      function openModal() {
+        modal.hidden = false;
+        document.body.style.overflow = 'hidden';
+        loadList();
+      }
+      function closeModal() {
+        modal.hidden = true;
+        document.body.style.overflow = '';
+      }
+
+      // 拉取外挂字幕列表并渲染（内嵌字幕不经过该接口，天然不出现在管理列表中）
+      async function loadList() {
+        listBox.innerHTML = '<div class="sub-mgr-empty">加载中…</div>';
+        try {
+          const data = await subFetch(apiURL);
+          const subs = data.subtitles || [];
+          if (subs.length === 0) {
+            listBox.innerHTML = '<div class="sub-mgr-empty">暂无外挂字幕，上传一个吧</div>';
+            return;
+          }
+          listBox.innerHTML = '';
+          subs.forEach((s) => {
+            const row = document.createElement('div');
+            row.className = 'pl-pick-item sub-mgr-row';
+            const name = document.createElement('span');
+            name.className = 'sub-mgr-name';
+            name.textContent = s.label || s.name || ('字幕 ' + s.id.slice(0, 6));
+            const meta = document.createElement('span');
+            meta.className = 'sub-mgr-meta';
+            meta.textContent = (s.lang || '') + (s.format ? ' · ' + s.format : '');
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'btn-secondary sub-mgr-del';
+            del.textContent = '删除';
+            del.addEventListener('click', () => removeSub(s, name.textContent));
+            row.appendChild(name);
+            row.appendChild(meta);
+            row.appendChild(del);
+            listBox.appendChild(row);
+          });
+        } catch (err) {
+          listBox.innerHTML = '<div class="sub-mgr-empty">加载失败：' + err.message + '</div>';
+        }
+      }
+
+      async function uploadSub() {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) { showToast('请先选择字幕文件'); return; }
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        if (!allowedExt.includes(ext)) {
+          showToast('不支持的字幕格式，仅支持 srt/vtt/ass/ssa');
+          return;
+        }
+        const fd = new FormData();
+        fd.append('lang', langSel.value);
+        fd.append('file', file);
+        uploadBtn.disabled = true;
+        try {
+          await subFetch(apiURL, { method: 'POST', body: fd });
+          showToast('字幕已上传，刷新中…');
+          // 重建 <track> 与菜单：reload 后播放进度由现有续播逻辑恢复
+          setTimeout(() => { location.reload(); }, 500);
+        } catch (err) {
+          showToast('上传失败：' + err.message);
+          uploadBtn.disabled = false;
+        }
+      }
+
+      async function removeSub(s, displayName) {
+        if (!confirm('确定删除字幕「' + displayName + '」？文件将从媒体目录移除')) return;
+        try {
+          await subFetch(apiURL + '/' + s.id, { method: 'DELETE' });
+          showToast('字幕已删除，刷新中…');
+          setTimeout(() => { location.reload(); }, 500);
+        } catch (err) {
+          showToast('删除失败：' + err.message);
+        }
+      }
+
+      uploadBtn.addEventListener('click', uploadSub);
+      document.querySelectorAll('[data-sub-mgr-close]').forEach((b) => b.addEventListener('click', closeModal));
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) closeModal(); });
+      // 字幕菜单的固定入口通过自定义事件打开（三个渲染分支统一派发）
+      window.addEventListener('open-sub-mgr', openModal);
+    })();
+  </script>
 </body>
 </html>

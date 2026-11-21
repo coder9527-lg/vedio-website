@@ -186,6 +186,8 @@ func (s *Server) Handler() http.Handler {
 
 	// 外挂字幕：列表与 WebVTT 轨道（原画/HLS 两种模式通用）
 	mux.HandleFunc("GET /api/v1/videos/{id}/subtitles", s.handleSubtitleList)
+	mux.HandleFunc("POST /api/v1/videos/{id}/subtitles", s.handleSubtitleUpload)
+	mux.HandleFunc("DELETE /api/v1/videos/{id}/subtitles/{sid}", s.handleSubtitleDelete)
 	mux.HandleFunc("GET /subtitles/{id}/{sid}/track.vtt", s.handleSubtitleTrack)
 
 	// 认证相关路由（未开启密码时 /login 直接回首页）

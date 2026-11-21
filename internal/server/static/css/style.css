@@ -1080,3 +1080,27 @@ button:disabled { opacity: .6; cursor: wait; }
 }
 .bm-action:hover { border-color: var(--accent); }
 .bm-action-danger:hover { border-color: #f87171; color: #f87171; }
+
+/* 字幕管理弹窗：菜单固定入口与上传/列表样式 */
+.sub-mgr-entry { border-top: 1px solid var(--border); border-radius: 0; margin-top: 2px; padding-top: 10px; }
+.sub-mgr-empty { color: var(--muted); font-size: 13px; padding: 8px 2px; }
+.sub-mgr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.sub-mgr-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub-mgr-meta { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+.sub-mgr-del { padding: 5px 12px; font-size: 13px; flex-shrink: 0; }
+#sub-upload-file { font-size: 13px; color: var(--muted); }
