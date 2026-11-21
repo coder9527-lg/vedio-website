@@ -272,7 +272,7 @@ func TestRewriteMasterNames(t *testing.T) {
 		{Label: "国语", Default: true},
 		{Label: "English"},
 	}
-	tc.rewriteOnce(master, tracks)
+	tc.rewriteOnce(master, tracks, false)
 
 	got, err := os.ReadFile(master)
 	if err != nil {
@@ -288,6 +288,46 @@ func TestRewriteMasterNames(t *testing.T) {
 	}
 	if strings.Contains(text, "audio_1") {
 		t.Fatalf("旧名称 audio_N 应消失:\n%s", text)
+	}
+}
+
+// TestStripAudioOnlyStreamInf 验证 ABR master 中的纯音频条目被剔除，视频变体保留。
+func TestStripAudioOnlyStreamInf(t *testing.T) {
+	master := strings.Join([]string{
+		"#EXTM3U",
+		"#EXT-X-VERSION:6",
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="audio_0",URI="out-a0.m3u8"`,
+		`#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1",AUDIO="aud"`,
+		"out-0.m3u8",
+		`#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720,CODECS="avc1",AUDIO="aud"`,
+		"out-1.m3u8",
+		`#EXT-X-STREAM-INF:BANDWIDTH=140000,AUDIO="aud"`,
+		"out-a0.m3u8",
+		"",
+	}, "\n")
+
+	got := stripAudioOnlyStreamInf(master)
+
+	// 两个带 RESOLUTION 的视频变体必须保留
+	if !strings.Contains(got, "out-0.m3u8") || !strings.Contains(got, "out-1.m3u8") {
+		t.Fatalf("视频变体被误删:\n%s", got)
+	}
+	// 无 RESOLUTION 的纯音频 STREAM-INF 必须被剔除（其带宽 140000 仅出现在该行）
+	if strings.Contains(got, "140000") {
+		t.Fatalf("纯音频 STREAM-INF 未被剔除:\n%s", got)
+	}
+	// EXT-X-MEDIA 行里带引号的 URI 引用应保留（音频分组仍需它）
+	if !strings.Contains(got, `URI="out-a0.m3u8"`) {
+		t.Fatalf("EXT-X-MEDIA 的音频 URI 被误删:\n%s", got)
+	}
+	// 末尾独立的 out-a0.m3u8 URI 行应消失
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	if last := lines[len(lines)-1]; last == "out-a0.m3u8" {
+		t.Fatalf("纯音频 URI 行未被剔除:\n%s", got)
+	}
+	// 视频 STREAM-INF 的 RESOLUTION 数量仍为 2
+	if n := strings.Count(got, "RESOLUTION="); n != 2 {
+		t.Fatalf("期望保留 2 个 RESOLUTION，实际 %d:\n%s", n, got)
 	}
 }
 

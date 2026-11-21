@@ -26,7 +26,11 @@ func (s *Server) handleTranscodeStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	quality := media.NormalizeQuality(r.URL.Query().Get("q"))
+	// auto（自适应 ABR）独立识别；其余档位非法值由 media 层归一化为 720p。
+	quality := r.URL.Query().Get("q")
+	if quality != media.QualityAuto {
+		quality = media.NormalizeQuality(quality)
+	}
 	sess, err := s.transcoder.Ensure(v, quality)
 	if err != nil {
 		switch {
@@ -81,6 +85,10 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "index.m3u8":
 		s.serveHLSPlaylist(w, r, id, parts[0])
 
+	case len(parts) == 2 && parts[1] == "master.m3u8":
+		// ABR 自适应会话（及多音轨变体布局）的 master 入口，同样走 PlaylistPath 解析。
+		s.serveHLSPlaylist(w, r, id, parts[0])
+
 	case len(parts) == 2:
 		s.serveHLSAsset(w, r, id, parts[0], parts[1])
 
@@ -98,7 +106,7 @@ func (s *Server) serveHLSPlaylist(w http.ResponseWriter, r *http.Request, id, qu
 		return
 	}
 	sess.Touch()
-	path, err := sess.PlaylistPath()
+	content, err := sess.PlaylistContent()
 	if err != nil {
 		// 首个分片尚未产出：404，播放器按重试间隔再来
 		w.WriteHeader(http.StatusNotFound)
@@ -106,7 +114,7 @@ func (s *Server) serveHLSPlaylist(w http.ResponseWriter, r *http.Request, id, qu
 	}
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeFile(w, r, path)
+	_, _ = w.Write(content)
 }
 
 // serveHLSAsset 返回 HLS 产物中的媒体播放列表或 mpegts 分片（多音轨变体布局）。

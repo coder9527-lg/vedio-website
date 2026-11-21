@@ -2,11 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -296,6 +298,301 @@ func TestTranscodeSharedSubtitleRoute(t *testing.T) {
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("%s 期望 404，实际 %d", p, resp.StatusCode)
 		}
+	}
+}
+
+// makeHTTPTestVideoWithSize 生成指定分辨率、6 秒可真实转码的测试视频。
+// lavfi 虚拟输入直接作为转码源时，其容器与 filter_complex + var_stream_map 的
+// 音频流映射不兼容（ffmpeg 报 Unable to map stream），因此先用 lavfi 编码成
+// 普通 mp4，再 stream copy 重封装为目标容器，得到与真实素材一致的文件输入。
+func makeHTTPTestVideoWithSize(t *testing.T, path, size string) {
+	t.Helper()
+	// 中间 mp4 放在目标目录之外，避免被媒体库扫描成第二个视频
+	tmpMP4 := filepath.Join(t.TempDir(), "abr-src.mp4")
+	gen := exec.Command("ffmpeg", "-v", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size="+size+":rate=25:duration=6",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+		"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+		tmpMP4)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("生成中间 mp4 失败: %v\n%s", err, out)
+	}
+	remux := exec.Command("ffmpeg", "-v", "error", "-y",
+		"-i", tmpMP4, "-c", "copy", path)
+	if out, err := remux.CombinedOutput(); err != nil {
+		t.Fatalf("重封装测试视频失败: %v\n%s", err, out)
+	}
+}
+
+// newTranscodeHTTPServerWithSize 构造指定源分辨率的转码测试服务。
+func newTranscodeHTTPServerWithSize(t *testing.T, size string) (*httptest.Server, string) {
+	t.Helper()
+	root := t.TempDir()
+	makeHTTPTestVideoWithSize(t, filepath.Join(root, "movie.mkv"), size)
+	lib := media.NewLibrary(root, media.DefaultExts)
+	if _, err := lib.Scan(); err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	thumbs, err := media.NewThumbnailer(t.TempDir(), "ffmpeg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc, err := media.NewTranscoder(t.TempDir(), "ffmpeg", "ffprobe", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(tc.Close)
+	srv, err := New(lib, thumbs, tc, nil, nil, nil, false)
+	if err != nil {
+		t.Fatalf("New 失败: %v", err)
+	}
+	return newHTTPTestServer(t, srv.Handler()), lib.List()[0].ID
+}
+
+// newTranscodeHTTPServerWithABR 构造指定源分辨率与 ABR 变体档位的转码测试服务。
+func newTranscodeHTTPServerWithABR(t *testing.T, size string, abrRaw string) (*httptest.Server, string) {
+	t.Helper()
+	root := t.TempDir()
+	makeHTTPTestVideoWithSize(t, filepath.Join(root, "movie.mkv"), size)
+	lib := media.NewLibrary(root, media.DefaultExts)
+	if _, err := lib.Scan(); err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	thumbs, err := media.NewThumbnailer(t.TempDir(), "ffmpeg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc, err := media.NewTranscoder(t.TempDir(), "ffmpeg", "ffprobe", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(tc.Close)
+	tc.SetABRQualities(media.ParseABRQualities(abrRaw))
+	srv, err := New(lib, thumbs, tc, nil, nil, nil, false)
+	if err != nil {
+		t.Fatalf("New 失败: %v", err)
+	}
+	return newHTTPTestServer(t, srv.Handler()), lib.List()[0].ID
+}
+
+// waitAutoMaster 轮询 auto 状态接口直到 master 就绪，返回 master 文本内容。
+func waitAutoMaster(t *testing.T, ts *httptest.Server, videoID string) string {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(ts.URL + "/api/v1/videos/" + videoID + "/transcode?q=auto")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		var st struct {
+			State       string `json:"state"`
+			HasPlaylist bool   `json:"hasPlaylist"`
+			Quality     string `json:"quality"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&st)
+		resp.Body.Close()
+		if st.State == "failed" {
+			t.Fatal("auto 转码失败")
+		}
+		if st.Quality != "" && st.Quality != media.QualityAuto {
+			t.Fatalf("状态回显档位 = %q，期望 auto", st.Quality)
+		}
+		if st.HasPlaylist {
+			mresp, err := http.Get(ts.URL + "/hls/" + videoID + "/auto/master.m3u8")
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(mresp.Body)
+			mresp.Body.Close()
+			if mresp.StatusCode != http.StatusOK {
+				t.Fatalf("auto master 期望 200，实际 %d", mresp.StatusCode)
+			}
+			if ct := mresp.Header.Get("Content-Type"); ct != "application/vnd.apple.mpegurl" {
+				t.Fatalf("master Content-Type = %q", ct)
+			}
+			if cc := mresp.Header.Get("Cache-Control"); cc != "no-store" {
+				t.Fatalf("master Cache-Control = %q，期望 no-store", cc)
+			}
+			return string(body)
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+	t.Fatal("超时未等到 auto master")
+	return ""
+}
+
+// TestTranscodeABRAuto1080p 验证 1080p 源的 auto 会话产出多变体 master，
+// 纯音频 STREAM-INF 被剔除，变体播放列表/分片可读，且与手动档目录隔离。
+func TestTranscodeABRAuto1080p(t *testing.T) {
+	if !ffmpegInPath() {
+		t.Skip("环境无 ffmpeg，跳过 ABR 集成测试")
+	}
+	ts, videoID := newTranscodeHTTPServerWithSize(t, "1920x1080")
+
+	master := waitAutoMaster(t, ts, videoID)
+
+	// master 含 3 个带 RESOLUTION 的视频变体，且无纯音频（无 RESOLUTION）STREAM-INF
+	if n := strings.Count(master, "RESOLUTION="); n != 3 {
+		t.Fatalf("期望 3 个视频变体 RESOLUTION，实际 %d:\n%s", n, master)
+	}
+	for _, line := range strings.Split(master, "\n") {
+		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") && !strings.Contains(line, "RESOLUTION") {
+			t.Fatalf("master 残留纯音频 STREAM-INF:\n%s", master)
+		}
+	}
+	// BANDWIDTH/CODECS 元信息齐全
+	if !strings.Contains(master, "BANDWIDTH=") || !strings.Contains(master, "CODECS=") {
+		t.Fatalf("master 缺少 BANDWIDTH/CODECS:\n%s", master)
+	}
+
+	// 三个变体播放列表与首个分片均可读
+	for _, variant := range []string{"out-0.m3u8", "out-1.m3u8", "out-2.m3u8"} {
+		resp, err := http.Get(ts.URL + "/hls/" + videoID + "/auto/" + variant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s 期望 200，实际 %d", variant, resp.StatusCode)
+		}
+		seg := ""
+		for _, l := range strings.Split(string(body), "\n") {
+			if strings.HasSuffix(l, ".ts") {
+				seg = l
+				break
+			}
+		}
+		if seg == "" {
+			t.Fatalf("%s 中未找到分片", variant)
+		}
+		sresp, err := http.Get(ts.URL + "/hls/" + videoID + "/auto/" + seg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sresp.Body.Close()
+		if sresp.StatusCode != http.StatusOK {
+			t.Fatalf("分片 %s 期望 200，实际 %d", seg, sresp.StatusCode)
+		}
+	}
+
+	// 白名单外与路径穿越一律 404
+	for _, p := range []string{
+		"/hls/" + videoID + "/auto/ffmpeg.log",
+		"/hls/" + videoID + "/auto/../ffmpeg.log",
+		"/hls/" + videoID + "/auto/evil.txt",
+	} {
+		resp, err := http.Get(ts.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s 期望 404，实际 %d", p, resp.StatusCode)
+		}
+	}
+
+	// 目录隔离：auto 就绪不代表手动 720p 会话可读
+	resp, err := http.Get(ts.URL + "/hls/" + videoID + "/720p/index.m3u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("未启动的 720p 手动档期望 404，实际 %d", resp.StatusCode)
+	}
+}
+
+// TestTranscodeABRAutoSmallSource 验证小分辨率源 auto 退化为单变体仍可播且不放大。
+func TestTranscodeABRAutoSmallSource(t *testing.T) {
+	if !ffmpegInPath() {
+		t.Skip("环境无 ffmpeg，跳过 ABR 集成测试")
+	}
+	ts, videoID := newTranscodeHTTPServerWithSize(t, "320x240")
+
+	master := waitAutoMaster(t, ts, videoID)
+	// 320x240 低于全部档位，兜底单变体，master 仅 1 个 RESOLUTION
+	if n := strings.Count(master, "RESOLUTION="); n != 1 {
+		t.Fatalf("小源期望 1 个兜底变体，实际 %d:\n%s", n, master)
+	}
+	// 唯一变体仍可访问
+	resp, err := http.Get(ts.URL + "/hls/" + videoID + "/auto/out-0.m3u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("兜底变体播放列表期望 200，实际 %d", resp.StatusCode)
+	}
+}
+
+// TestTranscodeABRAutoAndManualIsolation 验证 auto 与手动档会话键独立、可并存。
+func TestTranscodeABRAutoAndManualIsolation(t *testing.T) {
+	if !ffmpegInPath() {
+		t.Skip("环境无 ffmpeg，跳过 ABR 集成测试")
+	}
+	ts, videoID := newTranscodeHTTPServerWithSize(t, "1920x1080")
+
+	waitAutoMaster(t, ts, videoID)
+	waitPlaylist(t, ts, videoID, "480p")
+
+	// 两类入口各自 200
+	for _, p := range []string{
+		"/hls/" + videoID + "/auto/master.m3u8",
+		"/hls/" + videoID + "/480p/index.m3u8",
+	} {
+		resp, err := http.Get(ts.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s 期望 200，实际 %d", p, resp.StatusCode)
+		}
+	}
+}
+
+// TestTranscodeABRConfiguredQualities 验证 TRANSCODE_ABR_QUALITIES 减档后
+// 1080 源也只产出配置的 720p/480p 两个变体，master 不再含 1080 分辨率。
+func TestTranscodeABRConfiguredQualities(t *testing.T) {
+	if !ffmpegInPath() {
+		t.Skip("环境无 ffmpeg，跳过 ABR 集成测试")
+	}
+	ts, videoID := newTranscodeHTTPServerWithABR(t, "1920x1080", "720p,480p")
+
+	master := waitAutoMaster(t, ts, videoID)
+	if n := strings.Count(master, "RESOLUTION="); n != 2 {
+		t.Fatalf("配置两档期望 2 个变体，实际 %d:\n%s", n, master)
+	}
+	if strings.Contains(master, "RESOLUTION=1920x1080") {
+		t.Fatalf("减档后不应再产出 1080p 变体:\n%s", master)
+	}
+	if !strings.Contains(master, "RESOLUTION=1280x720") || !strings.Contains(master, "RESOLUTION=854x480") {
+		t.Fatalf("master 应含 720p/480p 两档:\n%s", master)
+	}
+	// 两个变体播放列表均可访问，第三个不应存在
+	for _, variant := range []string{"out-0.m3u8", "out-1.m3u8"} {
+		resp, err := http.Get(ts.URL + "/hls/" + videoID + "/auto/" + variant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s 期望 200，实际 %d", variant, resp.StatusCode)
+		}
+	}
+	resp, err := http.Get(ts.URL + "/hls/" + videoID + "/auto/out-2.m3u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("未配置第三档时 out-2.m3u8 期望 404，实际 %d", resp.StatusCode)
 	}
 }
 

@@ -73,6 +73,7 @@
         </button>
         <div class="track-dropdown" id="quality-dropdown" role="menu">
           <button type="button" class="track-item current" data-quality="direct" role="menuitem">原画</button>
+          <button type="button" class="track-item" data-quality="auto" role="menuitem">自适应（推荐）</button>
           <button type="button" class="track-item" data-quality="1080p" role="menuitem">1080p</button>
           <button type="button" class="track-item" data-quality="720p" role="menuitem">720p</button>
           <button type="button" class="track-item" data-quality="480p" role="menuitem">480p</button>
@@ -173,16 +174,21 @@
       const directSrc = '/stream/' + videoId;
       const statusAPI = '/api/v1/videos/' + videoId + '/transcode';
       const statusEl = document.getElementById('transcode-status');
-      const QUALITIES = ['1080p', '720p', '480p']; // 可选转码档位，原画不走转码
+      const QUALITIES = ['1080p', '720p', '480p']; // 手动转码档位，原画不走转码
+      const AUTO = 'auto';                        // 自适应 ABR 档位（master 多清晰度）
       let hls = null;
       let pollTimer = null;
-      // 当前播放源：'direct'（原画直链）或具体档位（1080p/720p/480p）
+      // 当前播放源：'direct'（原画直链）、'auto'（自适应）或具体手动档位（1080p/720p/480p）
       let quality = 'direct';
+      // 当前 hls 实例是否承载 ABR master（auto 会话）；为 true 时手动切档只锁 level 不重建实例
+      let abrMode = false;
       let pollFailedOnce = false; // 同档位转码失败是否已重试过一次
 
       function setStatus(text) { if (statusEl) statusEl.textContent = text || ''; }
-      // 当前档位的 HLS 入口与状态轮询地址（档位体现在 URL 路径/查询参数中）
-      const hlsEntryURL = () => '/hls/' + videoId + '/' + quality + '/index.m3u8';
+      // 自适应会话入口是 master.m3u8，手动档位入口是 index.m3u8
+      const hlsEntryURL = () => quality === AUTO
+        ? '/hls/' + videoId + '/auto/master.m3u8'
+        : '/hls/' + videoId + '/' + quality + '/index.m3u8';
       const statusURL = () => statusAPI + '?q=' + encodeURIComponent(quality);
       // 同步清晰度菜单的高亮项
       function markQualityMenu() {
@@ -196,6 +202,7 @@
       function destroyHls() {
         stopPolling();
         if (hls) { hls.destroy(); hls = null; }
+        abrMode = false;
       }
 
       // clearStatus=false 用于转码失败后的自动回退，保留错误提示
@@ -210,22 +217,64 @@
         if (clearStatus) setStatus('');
       }
 
-      // 选择清晰度：原画走直链；其余档位销毁旧实例后按新 URL 轮询并挂载 HLS。
+      // 选择清晰度：
+      //   - 原画走直链；
+      //   - 自适应（auto）启动 ABR 会话，hls.js/Safari 按带宽在 master 内自动切档；
+      //   - 已处于 auto 会话时再选手动档位，不重建实例，仅用 hls.currentLevel 锁定对应清晰度，
+      //     选回 auto 则 currentLevel=-1 恢复自适应；
+      //   - 其余情况销毁旧实例后按新 URL 轮询并挂载 HLS。
       // 同档位转码失败先重试一次，再次失败回退原画直链。
       function selectQuality(q) {
         if (q === quality) return;
-        if (q !== 'direct' && !QUALITIES.includes(q)) return;
+        if (q !== 'direct' && q !== AUTO && !QUALITIES.includes(q)) return;
         if (q === 'direct') {
           useDirect();
           return;
         }
+
+        // 已在 ABR master 实例上：手动档位只锁定 level，避免重新转码/重建实例
+        if (abrMode && hls && QUALITIES.includes(q)) {
+          const idx = levelIndexOf(q);
+          if (idx >= 0) {
+            quality = q;
+            pollFailedOnce = false;
+            markQualityMenu();
+            hls.currentLevel = idx;
+            setStatus('已锁定 ' + q + '（自适应会话内切档）');
+            return;
+          }
+          // master 不含该档位（源高度不足）：落到独立手动档位会话
+        } else if (abrMode && q === AUTO) {
+          quality = AUTO;
+          markQualityMenu();
+          hls.currentLevel = -1; // -1 恢复 hls.js 自动选档
+          setStatus('自适应（按带宽自动切档）');
+          return;
+        }
+
         destroyHls();
         quality = q;
         pollFailedOnce = false;
         markQualityMenu();
-        setStatus('正在启动 ' + q + ' 转码…');
+        setStatus(q === AUTO ? '正在启动自适应转码…' : '正在启动 ' + q + ' 转码…');
         // 先通知后端启动/复用该档位转码会话，再轮询等待 m3u8 产出
         pollTranscodeStatus();
+      }
+
+      // levelIndexOf 在 ABR master 的清晰度列表中找到与手动档位高度最接近的 level。
+      // master 的 level 按变体顺序（高→低）排列，hls.levels[i].height 为变体像素高度；
+      // 取高度不超过目标档位的最高 level，找不到再退而取最接近的一档。
+      function levelIndexOf(q) {
+        if (!hls || !Array.isArray(hls.levels) || !hls.levels.length) return -1;
+        const target = { '1080p': 1080, '720p': 720, '480p': 480 }[q] || 0;
+        let best = -1;
+        hls.levels.forEach((lv, i) => {
+          const h = lv.height || 0;
+          if (h <= target && (best < 0 || h > (hls.levels[best].height || 0))) best = i;
+        });
+        if (best >= 0) return best;
+        // 目标档位高于所有变体：直接取最高 level（索引 0）
+        return 0;
       }
 
       async function pollTranscodeStatus() {
@@ -265,6 +314,7 @@
               if (window.SubtitleMenu && Array.isArray(data.embeddedSubtitles)) {
                 window.SubtitleMenu.addEmbedded(data.embeddedSubtitles, videoId);
               }
+              abrMode = (quality === AUTO); // auto 会话承载 master，后续手动切档走 level 锁定
               attachHls();
               return;
             }
@@ -300,6 +350,13 @@
             fragLoadingRetryDelay: 800,
           });
           hls.on(Hls.Events.MANIFEST_PARSED, onReady);
+          // ABR master：自动切档或手动锁定后，按当前 level 高度回显实际清晰度
+          if (abrMode) {
+            hls.on(Hls.Events.LEVEL_SWITCHED, (_evt, data) => {
+              const lv = hls.levels && hls.levels[data.level];
+              if (lv && lv.height) setStatus('自适应播放中 · 当前 ' + lv.height + 'p');
+            });
+          }
           hls.on(Hls.Events.ERROR, (_evt, data) => {
             if (!data.fatal) return;
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -386,7 +443,8 @@
         }
       });
 
-      // 非浏览器友好格式（MKV/FLV/AVI 等）默认走 720p 转码播放
+      // 非浏览器友好格式（MKV/FLV/AVI 等）默认走 720p 单档转码播放；
+      // 自适应 ABR 编码开销约为单档多倍，不自动启用，由用户在菜单显式选择。
       if (!nativePlayable) {
         selectQuality('720p');
       }

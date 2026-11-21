@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -123,11 +124,44 @@ type ffprobeJSON struct {
 		Index       int    `json:"index"`
 		CodecType   string `json:"codec_type"`
 		CodecName   string `json:"codec_name"`
+		Width       int    `json:"width"`  // 视频流宽度（非视频流为 0）
+		Height      int    `json:"height"` // 视频流高度（非视频流为 0）
 		Disposition struct {
 			Default int `json:"default"`
 		} `json:"disposition"`
 		Tags map[string]string `json:"tags"`
 	} `json:"streams"`
+}
+
+// ProbeVideoHeight 用 ffprobe 返回第一个视频流的像素高度，供 ABR 变体过滤（不放大源）。
+// 无视频流或探测失败时返回错误，由调用方决定降级策略。
+func ProbeVideoHeight(ffprobeBin, path string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ProbeTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, ffprobeBin,
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=height",
+		"-of", "json",
+		path,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+	var parsed ffprobeJSON
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return 0, err
+	}
+	// 已用 -select_streams v:0 限定视频流，返回条目只含 height 字段（无 codec_type），
+	// 因此直接取第一个正高度即可。
+	for _, st := range parsed.Streams {
+		if st.Height > 0 {
+			return st.Height, nil
+		}
+	}
+	return 0, errors.New("ffprobe 未探测到有效视频流高度")
 }
 
 // ProbeAudio 用 ffprobe 列出视频中的全部音频流（按流序号升序）。
