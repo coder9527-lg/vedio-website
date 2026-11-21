@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
@@ -203,6 +204,9 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	state := s.loadVideoState()
 	// 片头片尾跳过设置（仅 watch 页单视频点查；读取失败静默降级，不阻断播放页）
 	var skip *store.SkipSetting
+	// 视频书签（同上，仅 watch 页点查；失败降级为空列表，不阻断播放页）
+	var bookmarks []store.Bookmark
+	var bookmarksJSON template.JS
 	if s.storeEnabled() {
 		got, err := s.store.GetSkipSetting(v.ID)
 		if err != nil {
@@ -210,6 +214,14 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 			skip = nil
 		} else {
 			skip = got
+		}
+		bookmarks, err = s.store.ListBookmarks(v.ID)
+		if err != nil {
+			log.Printf("读取书签失败: %v", err)
+			bookmarks = nil
+		}
+		if raw, mErr := json.Marshal(bookmarks); mErr == nil {
+			bookmarksJSON = template.JS(raw)
 		}
 	}
 	subtitles := s.library.Subtitles(v.ID)
@@ -274,6 +286,8 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		AutoNextURL    string
 		AutoNextName   string
 		Skip           *store.SkipSetting
+		Bookmarks      []store.Bookmark
+		BookmarksJSON  template.JS
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
@@ -289,6 +303,8 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		AutoNextURL:    autoNextURL,
 		AutoNextName:   autoNextName,
 		Skip:           skip,
+		Bookmarks:      bookmarks,
+		BookmarksJSON:  bookmarksJSON,
 	})
 }
 

@@ -994,3 +994,89 @@ button:disabled { opacity: .6; cursor: wait; }
 }
 .skip-toast[hidden] { display: none; }
 .skip-toast.show { opacity: 1; }
+
+/* ---------- 视频书签：时间轴刻度 + 播放页面板 ---------- */
+/* 刻度层叠在视频顶部，容器不拦截事件，仅圆点可点 */
+.bm-marker-bar {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  height: 12px;
+  pointer-events: none;
+  z-index: 2;
+}
+.bm-marker {
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, .6);
+  background: var(--accent);
+  transform: translateX(-50%);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform .15s ease;
+}
+.bm-marker:hover { transform: translateX(-50%) scale(1.35); }
+
+.bm-panel {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.bm-panel-head {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bm-caret { color: var(--muted); transition: transform .2s ease; }
+.bm-panel-body { padding: 0 14px 12px; }
+.bm-panel-body[hidden] { display: none; }
+.bm-empty { margin: 4px 0; color: var(--muted); font-size: 14px; }
+.bm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bm-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .35);
+}
+.bm-time {
+  flex: none;
+  padding: 3px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.bm-note { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-note-empty { color: var(--muted); }
+.bm-action {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.bm-action:hover { border-color: var(--accent); }
+.bm-action-danger:hover { border-color: #f87171; color: #f87171; }

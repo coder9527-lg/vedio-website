@@ -140,6 +140,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/videos/{id}/skip", s.handleSkipGet)
 	mux.HandleFunc("PUT /api/v1/videos/{id}/skip", s.handleSkipPut)
 	mux.HandleFunc("DELETE /api/v1/videos/{id}/skip", s.handleSkipDelete)
+	// 视频书签/时间戳笔记（仅在启用持久化时可用，否则返回 503）
+	mux.HandleFunc("GET /api/v1/videos/{id}/bookmarks", s.handleBookmarkList)
+	mux.HandleFunc("POST /api/v1/videos/{id}/bookmarks", s.handleBookmarkCreate)
+	mux.HandleFunc("PATCH /api/v1/videos/{id}/bookmarks/{bid}", s.handleBookmarkUpdate)
+	mux.HandleFunc("DELETE /api/v1/videos/{id}/bookmarks/{bid}", s.handleBookmarkDelete)
 	mux.HandleFunc("GET /api/v1/favorites", s.handleFavoriteList)
 	mux.HandleFunc("POST /api/v1/videos/{id}/favorite", s.handleFavoriteSet)
 	mux.HandleFunc("GET /api/v1/videos/{id}/favorite", s.handleFavoriteGet)

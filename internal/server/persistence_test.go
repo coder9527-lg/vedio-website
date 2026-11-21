@@ -211,6 +211,11 @@ func TestPersistenceDisabledReturns503(t *testing.T) {
 		{http.MethodGet, "/api/v1/videos/x/skip"},
 		{http.MethodPut, "/api/v1/videos/x/skip"},
 		{http.MethodDelete, "/api/v1/videos/x/skip"},
+		// 视频书签 4 条路由在持久化关闭时同样应 503
+		{http.MethodGet, "/api/v1/videos/x/bookmarks"},
+		{http.MethodPost, "/api/v1/videos/x/bookmarks"},
+		{http.MethodPatch, "/api/v1/videos/x/bookmarks/1"},
+		{http.MethodDelete, "/api/v1/videos/x/bookmarks/1"},
 		// 播放列表 10 条路由在持久化关闭时同样应 503
 		{http.MethodGet, "/api/v1/playlists"},
 		{http.MethodPost, "/api/v1/playlists"},
@@ -253,6 +258,13 @@ func TestRescanPrunesOrphanRecords(t *testing.T) {
 	if _, err := srv.store.AddPlaylistItem(pl.ID, "ghost"); err != nil {
 		t.Fatalf("加入悬空视频失败: %v", err)
 	}
+	// 书签：真实视频 + 悬空 ghost 各一条
+	if _, err := srv.store.CreateBookmark(id, 12, "真实书签"); err != nil {
+		t.Fatalf("写入真实书签失败: %v", err)
+	}
+	if _, err := srv.store.CreateBookmark("ghost", 34, "孤儿书签"); err != nil {
+		t.Fatalf("写入孤儿书签失败: %v", err)
+	}
 
 	// 触发重扫，应清掉 ghost、保留真实视频
 	status, _ := doJSON(t, ts, http.MethodPost, "/api/v1/rescan", nil)
@@ -267,6 +279,13 @@ func TestRescanPrunesOrphanRecords(t *testing.T) {
 	}
 	if p, _ := srv.store.GetProgress(id); p == nil {
 		t.Fatal("真实视频的进度应保留")
+	}
+	// 书签：孤儿被清、真实保留
+	if list, _ := srv.store.ListBookmarks("ghost"); len(list) != 0 {
+		t.Fatal("重扫后孤儿书签应被清理")
+	}
+	if list, _ := srv.store.ListBookmarks(id); len(list) != 1 {
+		t.Fatalf("真实视频的书签应保留，实际 %d 条", len(list))
 	}
 
 	// 播放列表：悬空条目被清理，真实条目与列表表头保留
