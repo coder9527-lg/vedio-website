@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/coder9527-lg/vedio-website/internal/auth"
 	"github.com/coder9527-lg/vedio-website/internal/media"
@@ -27,6 +28,11 @@ type Server struct {
 	tmpl          *template.Template
 	authenticator *auth.Authenticator // nil 表示未开启访问密码
 	cookieSecure  bool
+
+	// 播放会话 → watch_events 行 ID 的内存索引。按 videoID 维度：同一视频的并发
+	// 标签页会复用一行（可接受的折衷）；服务重启后 map 清空，下次上报自动补建新行。
+	watchSessionMu sync.Mutex
+	watchSession   map[string]int64
 }
 
 func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Transcoder, st *store.Store, authenticator *auth.Authenticator, scraper *media.Scraper, cookieSecure bool) (*Server, error) {
@@ -43,6 +49,7 @@ func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Tr
 		tmpl:          tmpl,
 		authenticator: authenticator,
 		cookieSecure:  cookieSecure,
+		watchSession:  map[string]int64{},
 	}
 	// 批量刮削与单视频刮削同生命周期：scraper 为 nil（未配 TMDB_API_KEY）时保持 nil
 	if scraper != nil {
@@ -104,6 +111,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /shows/{id}", s.handleShowPage)
 	mux.HandleFunc("GET /stats", s.handleStats)
 	mux.HandleFunc("GET /search", s.handleSearch)
+	mux.HandleFunc("GET /history", s.handleHistory)
+	mux.HandleFunc("POST /history/clear", s.handleClearHistory)
 	mux.HandleFunc("GET /api/v1/shows", s.handleAPIListShows)
 	mux.HandleFunc("GET /api/v1/shows/{id}", s.handleAPIGetShow)
 	mux.HandleFunc("GET /api/v1/videos", s.handleAPIList)

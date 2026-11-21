@@ -381,3 +381,54 @@ func TestProgressMigrationAddsColumns(t *testing.T) {
 		t.Fatalf("新列默认值错误: %+v", p)
 	}
 }
+
+// TestWatchEventLifecycle 验证观看历史：会话建一行、同会话累加、倒序查询、清空。
+func TestWatchEventLifecycle(t *testing.T) {
+	st := openTestStore(t)
+	base := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
+
+	id1, err := st.StartWatchEvent("vid-a", base)
+	if err != nil {
+		t.Fatalf("StartWatchEvent 失败: %v", err)
+	}
+	if err := st.UpdateWatchEvent(id1, 30, 30, 100, base.Add(30*time.Second)); err != nil {
+		t.Fatalf("UpdateWatchEvent 失败: %v", err)
+	}
+	if err := st.UpdateWatchEvent(id1, 45, 75, 100, base.Add(75*time.Second)); err != nil {
+		t.Fatalf("二次更新失败: %v", err)
+	}
+
+	// 第二个会话开始时间更早，验证倒序
+	id2, err := st.StartWatchEvent("vid-b", base.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatalf("第二个会话失败: %v", err)
+	}
+	if err := st.UpdateWatchEvent(id2, 10, 10, 0, base.Add(-2*time.Hour+10*time.Second)); err != nil {
+		t.Fatalf("更新失败: %v", err)
+	}
+
+	events, err := st.ListWatchEvents(0)
+	if err != nil {
+		t.Fatalf("ListWatchEvents 失败: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("期望 2 条事件，实际 %d", len(events))
+	}
+	if events[0].ID != id1 {
+		t.Errorf("期望按开始时间倒序，首条 id=%d，实际 %d", id1, events[0].ID)
+	}
+	if events[0].WatchSeconds != 75 || events[0].Position != 75 {
+		t.Errorf("vid-a 累计错误: %+v", events[0])
+	}
+	if events[1].WatchSeconds != 10 {
+		t.Errorf("vid-b 累计错误: %+v", events[1])
+	}
+
+	if err := st.ClearWatchEvents(); err != nil {
+		t.Fatalf("ClearWatchEvents 失败: %v", err)
+	}
+	events, _ = st.ListWatchEvents(0)
+	if len(events) != 0 {
+		t.Errorf("清空后期望 0 条，实际 %d", len(events))
+	}
+}
