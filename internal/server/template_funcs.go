@@ -3,6 +3,8 @@ package server
 import (
 	"html/template"
 	"math"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -36,6 +38,28 @@ var tmplFuncs = template.FuncMap{
 	"joinStrings": func(items []string, sep string) string {
 		return strings.Join(items, sep)
 	},
+	// indexURL 生成保持 type/view/sort/q/genre 五元组正交的首页链接；
+	// overrides 以 key/value 成对传入覆盖项，空值表示从 URL 中移除该参数。
+	"indexURL": func(current map[string]string, overrides ...string) string {
+		params := url.Values{}
+		for k, v := range current {
+			if v != "" {
+				params.Set(k, v)
+			}
+		}
+		for i := 0; i+1 < len(overrides); i += 2 {
+			k, v := overrides[i], overrides[i+1]
+			if v == "" {
+				params.Del(k)
+			} else {
+				params.Set(k, v)
+			}
+		}
+		if encoded := params.Encode(); encoded != "" {
+			return "/?" + encoded
+		}
+		return "/"
+	},
 	// scrapeSource 把元信息来源标记转为中文展示文案。
 	"scrapeSource": func(source string) string {
 		switch source {
@@ -60,6 +84,26 @@ var tmplFuncs = template.FuncMap{
 		}
 		return true
 	},
+}
+
+// humanSize 把字节数格式化为人类可读的文件大小（B/KB/MB/GB/TB，保留 1 位小数）。
+func humanSize(n int64) string {
+	if n < 1024 {
+		return itoa(int(n)) + " B"
+	}
+	units := []string{"KB", "MB", "GB", "TB"}
+	val := float64(n) / 1024
+	idx := 0
+	for val >= 1024 && idx < len(units)-1 {
+		val /= 1024
+		idx++
+	}
+	return strconvFormatFloat(val, 1) + " " + units[idx]
+}
+
+// strconvFormatFloat 包装 strconv.FormatFloat，避免在模板辅助文件里扩散导入。
+func strconvFormatFloat(f float64, precision int) string {
+	return strconv.FormatFloat(f, 'f', precision, 64)
 }
 
 func pad2(n int) string {

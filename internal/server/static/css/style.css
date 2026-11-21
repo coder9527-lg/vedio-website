@@ -129,6 +129,13 @@ button:disabled { opacity: .6; cursor: wait; }
   color: #082f49;
   font-weight: 600;
 }
+/* 类型标签可能较多：允许换行并收紧间距 */
+.genre-tabs { flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.genre-tabs .tab-chip {
+  padding: 5px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
 
 .video-grid {
   display: grid;
@@ -817,4 +824,77 @@ button:disabled { opacity: .6; cursor: wait; }
   margin-right: 12px;
   padding: 5px 12px;
   font-size: 14px;
+}
+
+/* 匿名分享页（复用 login-page 布局） */
+.share-card { max-width: 440px; }
+.share-name {
+  font-size: 16px;
+  font-weight: 600;
+  word-break: break-all;
+  margin: 4px 0 10px;
+}
+.share-card .login-form input[type="text"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+}
+.share-card .login-form input[type="text"]:focus { outline: none; border-color: var(--accent); }
+
+/* 播放页分享弹窗 */
+.share-entry-btn { background: none; cursor: pointer; text-decoration: none; }
+.share-form-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.share-form-row label { flex-shrink: 0; font-size: 14px; color: var(--muted); }
+.share-form-row .pl-rename-input { flex: 1; }
+.share-result { margin: 14px 0; padding: 12px; background: var(--bg); border-radius: 10px; border: 1px solid var(--border); }
+.share-link-row { display: flex; gap: 8px; }
+.share-link-input { flex: 1; min-width: 0; font-size: 13px; }
+.share-list-title { font-size: 14px; margin: 16px 0 8px; }
+.share-row .share-del-btn {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  font-size: 13px;
+  background: none;
+  border: 1px solid rgba(248, 113, 113, .5);
+  color: #fca5a5;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.share-row .share-del-btn:hover { background: rgba(248, 113, 113, .12); }
+
+/* 首页横向行：继续观看 / 最近加入 */
+.shelf { margin: 26px 0 8px; }
+.shelf-title {
+  font-size: 18px;
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+.shelf-row {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.shelf-row::-webkit-scrollbar { height: 8px; }
+.shelf-row::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.shelf-card {
+  flex: 0 0 240px;
+  scroll-snap-align: start;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform .15s ease, border-color .15s ease;
+}
+.shelf-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+.shelf-card .meta { padding: 10px 12px; }
+.shelf-card .video-name { font-size: 14px; }
+@media (max-width: 600px) {
+  .shelf-card { flex-basis: 200px; }
 }

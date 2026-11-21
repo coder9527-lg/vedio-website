@@ -136,6 +136,7 @@ type Query struct {
 	Keyword string
 	Sort    string
 	IDs     map[string]bool // 非空时只返回这些 ID（用于收藏/继续观看等视图）
+	Genre   string          // 非空时只返回元信息 Genres 含该类型的视频（内存过滤）
 	Limit   int             // <= 0 表示不限制
 }
 
@@ -157,6 +158,9 @@ func (l *Library) Query(q Query) []*Video {
 		}
 		if keyword != "" && !strings.Contains(strings.ToLower(v.Name), keyword) &&
 			!strings.Contains(strings.ToLower(v.RelPath), keyword) {
+			continue
+		}
+		if q.Genre != "" && !l.videoHasGenreLocked(v.ID, q.Genre) {
 			continue
 		}
 		out = append(out, v)
@@ -196,6 +200,41 @@ func (l *Library) Metadata(id string) *Metadata {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.metadata[id]
+}
+
+// videoHasGenreLocked 判断视频元信息是否包含指定类型（大小写不敏感）。调用方须持有读锁。
+func (l *Library) videoHasGenreLocked(videoID, genre string) bool {
+	md := l.metadata[videoID]
+	if md == nil {
+		return false
+	}
+	target := strings.ToLower(strings.TrimSpace(genre))
+	for _, g := range md.Genres {
+		if strings.ToLower(strings.TrimSpace(g)) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// AllGenres 聚合全库元信息中的类型标签，按名称排序去重返回（无元信息视频不贡献标签）。
+func (l *Library) AllGenres() []string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	seen := map[string]bool{}
+	var out []string
+	for _, md := range l.metadata {
+		for _, g := range md.Genres {
+			g = strings.TrimSpace(g)
+			if g == "" || seen[g] {
+				continue
+			}
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // loadPersistedMetadata 从刮削缓存目录读取历史在线刮削结果；

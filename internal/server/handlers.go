@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/coder9527-lg/vedio-website/internal/media"
@@ -38,9 +39,23 @@ type indexData struct {
 	Sort      string                  // 当前排序
 	View      string                  // all | favorites | continue | playlists
 	Type      string                  // all | movie | show
+	Genre     string                  // 当前类型筛选（空=全部）
+	Genres    []string                // 全库可用类型标签（chips 数据源）
+	Params    map[string]string       // 当前五元组快照，供 indexURL 保持筛选正交
 	StoreOn   bool                    // 是否启用持久化
 	ScrapeOn  bool                    // 是否启用 TMDB 在线刮削
 	Playlists []store.PlaylistSummary // view=playlists 时的列表摘要
+
+	// 首页横向行（仅默认视图、无搜索/筛选时填充）：继续观看与最近加入
+	ContinueCards []shelfCard
+	RecentCards   []shelfCard
+}
+
+// shelfCard 是首页横向行（继续观看/最近加入）的单张卡片数据。
+type shelfCard struct {
+	Video    *media.Video
+	Progress store.Progress // 继续观看行使用；最近加入行为零值
+	Metadata *media.Metadata
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -59,13 +74,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		view = "all"
 	}
 	typeFilter := normalizeTypeFilter(q.Get("type"))
+	genre := strings.TrimSpace(q.Get("genre"))
 
-	query := media.Query{Keyword: keyword, Sort: sortVal}
+	query := media.Query{Keyword: keyword, Sort: sortVal, Genre: genre}
 	state := s.loadVideoState()
 	switch view {
 	case "playlists":
-		// 播放列表视图不按视频卡片过滤，忽略 type/q/sort，模板渲染专属面板
+		// 播放列表视图不按视频卡片过滤，忽略 type/q/sort/genre，模板渲染专属面板
 		query.IDs = nil
+		query.Genre = ""
+		genre = ""
 	case "favorites":
 		if len(state.Favs) == 0 {
 			query.IDs = map[string]bool{} // 强制空结果
@@ -92,22 +110,88 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if view == "playlists" {
 		playlists, _ = s.store.ListPlaylists()
 	}
-	s.render(w, "index.html", indexData{
-		basePage:  basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
-		Videos:    videos,
-		Cards:     s.buildHomeCards(videos, typeFilter),
-		Metadata:  metaMap,
-		Count:     len(videos),
-		Total:     s.library.Len(),
-		State:     state,
-		Query:     keyword,
-		Sort:      sortVal,
-		View:      view,
-		Type:      typeFilter,
+
+	data := indexData{
+		basePage: basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
+		Videos:   videos,
+		Cards:    s.buildHomeCards(videos, typeFilter),
+		Metadata: metaMap,
+		Count:    len(videos),
+		Total:    s.library.Len(),
+		State:    state,
+		Query:    keyword,
+		Sort:     sortVal,
+		View:     view,
+		Type:     typeFilter,
+		Genre:    genre,
+		Genres:   s.library.AllGenres(),
+		Params: map[string]string{
+			"type":  typeFilter,
+			"view":  view,
+			"sort":  sortVal,
+			"q":     keyword,
+			"genre": genre,
+		},
 		StoreOn:   s.storeEnabled(),
 		ScrapeOn:  s.scraperEnabled(),
 		Playlists: playlists,
-	})
+	}
+	// 横向行只在干净的默认视图展示：全部类型、全部视图、无搜索、无排序，避免与筛选结果语义冲突
+	if s.storeEnabled() && view == "all" && typeFilter == "all" && keyword == "" && sortVal == "" {
+		data.ContinueCards = s.buildContinueShelf()
+		data.RecentCards = s.buildRecentShelf()
+	}
+	s.render(w, "index.html", data)
+}
+
+// shelfSize 限制每个横向行的卡片数量。
+const shelfSize = 12
+
+// buildContinueShelf 组装「继续观看」行：复用 progress 表最近更新记录，
+// 过滤已看完（>=95%）与片头抖动（<5s），悬空视频自动跳过，保持 RecentProgress 的有序结果。
+func (s *Server) buildContinueShelf() []shelfCard {
+	recent, err := s.store.RecentProgress(shelfSize)
+	if err != nil {
+		log.Printf("读取继续观看失败: %v", err)
+		return nil
+	}
+	cards := make([]shelfCard, 0, len(recent))
+	for _, p := range recent {
+		if !hasProgressValue(p.Position, p.Duration) {
+			continue
+		}
+		v, ok := s.library.Get(p.VideoID)
+		if !ok {
+			continue // 视频文件已删除，悬空进度跳过
+		}
+		cards = append(cards, shelfCard{
+			Video:    v,
+			Progress: p,
+			Metadata: s.library.Metadata(v.ID),
+		})
+	}
+	return cards
+}
+
+// buildRecentShelf 组装「最近加入」行：复用文件 ModTime 语义，按修改时间倒序取前 N 个。
+func (s *Server) buildRecentShelf() []shelfCard {
+	videos := s.library.Query(media.Query{Sort: "newest", Limit: shelfSize})
+	cards := make([]shelfCard, 0, len(videos))
+	for _, v := range videos {
+		cards = append(cards, shelfCard{Video: v, Metadata: s.library.Metadata(v.ID)})
+	}
+	return cards
+}
+
+// hasProgressValue 与模板 hasProgress 同口径：位置 >5s 且未看到 95% 以上。
+func hasProgressValue(position, duration float64) bool {
+	if position < 5 {
+		return false
+	}
+	if duration > 0 && position/duration >= 0.95 {
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +345,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// 在线播放不强制下载头；?download=1 时由 serveVideoFile 附加 attachment
+	serveVideoFile(w, r, v, r.URL.Query().Has("download"))
+}
 
+// serveVideoFile 打开视频并通过 http.ServeContent 输出，原生支持 Range/条件请求。
+// forceAttachment=true 时强制下载文件名（匿名分享下载复用此入口）。
+func serveVideoFile(w http.ResponseWriter, r *http.Request, v *media.Video, forceAttachment bool) {
 	file, err := os.Open(v.AbsPath())
 	if err != nil {
 		http.Error(w, "无法打开视频文件", http.StatusInternalServerError)
@@ -275,7 +365,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Query().Has("download") {
+	if forceAttachment {
 		w.Header().Set("Content-Disposition",
 			fmt.Sprintf("attachment; filename*=UTF-8''%s", urlEncode(v.Name+v.Ext)))
 	}

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}} · 我的视频库</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-page">
+  <main class="login-card share-card">
+    <h1>📎 文件分享</h1>
+    <p class="share-name">{{.VideoName}}</p>
+    <p class="login-sub">大小：{{.SizeText}} ｜ 有效期至 {{.ExpiresAt.Format "2006-01-02 15:04"}}（UTC）</p>
+    {{if .Error}}<p class="login-error" role="alert">{{.Error}}</p>{{end}}
+
+    {{if .HasPasscode}}
+    <form method="post" action="/share/{{.Token}}/verify" class="login-form">
+      <input type="text" name="passcode" autocomplete="off"
+             placeholder="请输入提取码" required autofocus>
+      <button type="submit">验证并下载</button>
+    </form>
+    {{else}}
+    <form method="get" action="/share/{{.Token}}/download" class="login-form">
+      <button type="submit">⬇ 下载文件</button>
+    </form>
+    {{end}}
+  </main>
+</body>
+</html>

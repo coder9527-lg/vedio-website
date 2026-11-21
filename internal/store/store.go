@@ -83,12 +83,24 @@ CREATE TABLE IF NOT EXISTS playlist_item (
 );
 CREATE INDEX IF NOT EXISTS idx_playlist_item_video ON playlist_item(video_id);
 CREATE INDEX IF NOT EXISTS idx_playlist_item_order ON playlist_item(playlist_id, sort_order);
+CREATE TABLE IF NOT EXISTS shares (
+    token         TEXT PRIMARY KEY,
+    video_id      TEXT NOT NULL,
+    passcode_hash TEXT NOT NULL DEFAULT '',
+    expires_at    TIMESTAMP NOT NULL,
+    created_at    TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shares_video ON shares(video_id);
+CREATE INDEX IF NOT EXISTS idx_shares_expires ON shares(expires_at);
 `)
 	return err
 }
 
 // Close 关闭数据库连接。
 func (s *Store) Close() error { return s.db.Close() }
+
+// DB 暴露底层连接，仅供同模块测试构造特殊数据（如手动置过期）使用。
+func (s *Store) DB() *sql.DB { return s.db }
 
 // ---------- 播放进度 ----------
 

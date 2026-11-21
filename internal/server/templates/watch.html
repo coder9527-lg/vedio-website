@@ -40,9 +40,7 @@
     <p class="watch-original-title">{{.Metadata.Original}}</p>
     {{end}}
     {{if .TranscodeOn}}
-    <div class="player-modes" role="tablist" aria-label="播放模式">
-      <button type="button" id="mode-direct" class="mode-btn active" role="tab">原画直链</button>
-      <button type="button" id="mode-hls" class="mode-btn" role="tab">🔄 转码播放（HLS）</button>
+    <div class="player-modes" role="group" aria-label="转码状态">
       <span class="transcode-status" id="transcode-status" aria-live="polite"></span>
     </div>
     {{end}}
@@ -68,6 +66,19 @@
         </button>
         <div class="track-dropdown" id="audio-dropdown" role="menu"></div>
       </div>
+      {{if .TranscodeOn}}
+      <div class="track-menu" id="quality-menu-wrap">
+        <button type="button" id="quality-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
+          清晰度 <span class="caret">▾</span>
+        </button>
+        <div class="track-dropdown" id="quality-dropdown" role="menu">
+          <button type="button" class="track-item current" data-quality="direct" role="menuitem">原画</button>
+          <button type="button" class="track-item" data-quality="1080p" role="menuitem">1080p</button>
+          <button type="button" class="track-item" data-quality="720p" role="menuitem">720p</button>
+          <button type="button" class="track-item" data-quality="480p" role="menuitem">480p</button>
+        </div>
+      </div>
+      {{end}}
       <div class="track-menu" id="speed-menu-wrap">
         <button type="button" id="speed-menu-btn" class="track-btn" aria-haspopup="true" aria-expanded="false">
           倍速 <span class="caret">▾</span>
@@ -147,6 +158,9 @@
       <div><dt>修改时间</dt><dd>{{.Video.ModTime.Format "2006-01-02 15:04:05"}}</dd></div>
     </dl>
     <a class="download-btn" href="/stream/{{.Video.ID}}?download=1">⬇ 下载原文件</a>
+    {{if .StoreOn}}
+    <button type="button" class="download-btn share-entry-btn" id="share-open-btn">🔗 创建分享链接</button>
+    {{end}}
   </main>
 
   {{if .TranscodeOn}}
@@ -157,20 +171,24 @@
       const nativePlayable = {{.NativePlayable}};
       const player = document.getElementById('player');
       const directSrc = '/stream/' + videoId;
-      const hlsEntryURL = '/hls/' + videoId + '/index.m3u8'; // 服务端按布局返回 index 或 master 内容
       const statusAPI = '/api/v1/videos/' + videoId + '/transcode';
-      const modeDirect = document.getElementById('mode-direct');
-      const modeHls = document.getElementById('mode-hls');
       const statusEl = document.getElementById('transcode-status');
+      const QUALITIES = ['1080p', '720p', '480p']; // 可选转码档位，原画不走转码
       let hls = null;
       let pollTimer = null;
-      let mode = 'direct';
+      // 当前播放源：'direct'（原画直链）或具体档位（1080p/720p/480p）
+      let quality = 'direct';
+      let pollFailedOnce = false; // 同档位转码失败是否已重试过一次
 
       function setStatus(text) { if (statusEl) statusEl.textContent = text || ''; }
-      function setActiveMode(m) {
-        mode = m;
-        modeDirect.classList.toggle('active', m === 'direct');
-        modeHls.classList.toggle('active', m === 'hls');
+      // 当前档位的 HLS 入口与状态轮询地址（档位体现在 URL 路径/查询参数中）
+      const hlsEntryURL = () => '/hls/' + videoId + '/' + quality + '/index.m3u8';
+      const statusURL = () => statusAPI + '?q=' + encodeURIComponent(quality);
+      // 同步清晰度菜单的高亮项
+      function markQualityMenu() {
+        document.querySelectorAll('#quality-dropdown .track-item').forEach((el) => {
+          el.classList.toggle('current', el.dataset.quality === quality);
+        });
       }
       function stopPolling() {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -183,17 +201,30 @@
       // clearStatus=false 用于转码失败后的自动回退，保留错误提示
       function useDirect(clearStatus = true) {
         destroyHls();
+        quality = 'direct';
+        pollFailedOnce = false;
         player.removeAttribute('src');
         player.src = directSrc;
         player.load();
-        setActiveMode('direct');
+        markQualityMenu();
         if (clearStatus) setStatus('');
       }
 
-      function useHls() {
-        setActiveMode('hls');
-        setStatus('正在启动转码…');
-        // 先通知后端启动/复用转码会话，再轮询等待 m3u8 产出
+      // 选择清晰度：原画走直链；其余档位销毁旧实例后按新 URL 轮询并挂载 HLS。
+      // 同档位转码失败先重试一次，再次失败回退原画直链。
+      function selectQuality(q) {
+        if (q === quality) return;
+        if (q !== 'direct' && !QUALITIES.includes(q)) return;
+        if (q === 'direct') {
+          useDirect();
+          return;
+        }
+        destroyHls();
+        quality = q;
+        pollFailedOnce = false;
+        markQualityMenu();
+        setStatus('正在启动 ' + q + ' 转码…');
+        // 先通知后端启动/复用该档位转码会话，再轮询等待 m3u8 产出
         pollTranscodeStatus();
       }
 
@@ -201,7 +232,7 @@
         stopPolling();
         const tick = async () => {
           try {
-            const res = await fetch(statusAPI);
+            const res = await fetch(statusURL());
             if (res.status === 401) { location.href = '/login'; return; }
             if (res.status === 429) { setStatus('转码任务排队中，稍候…'); return; }
             if (!res.ok) {
@@ -211,8 +242,15 @@
             }
             const data = await res.json();
             if (data.state === 'failed') {
-              setStatus('转码失败（可查看转码目录 ffmpeg.log），已切回原画直链');
               stopPolling();
+              if (!pollFailedOnce) {
+                // 同档位先整体重试一次（后端会清空旧产物全量重转）
+                pollFailedOnce = true;
+                setStatus(quality + ' 转码失败，正在重试…');
+                pollTranscodeStatus();
+                return;
+              }
+              setStatus('转码失败（可查看转码目录 ffmpeg.log），已切回原画直链');
               useDirect(false); // 保留上面的错误提示
               return;
             }
@@ -274,11 +312,11 @@
               useDirect(false);
             }
           });
-          hls.loadSource(hlsEntryURL);
+          hls.loadSource(hlsEntryURL());
           hls.attachMedia(player);
         } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
           // Safari 等原生 HLS
-          player.src = hlsEntryURL;
+          player.src = hlsEntryURL();
           player.addEventListener('loadedmetadata', onReady, { once: true });
         } else {
           setStatus('当前浏览器不支持 HLS 播放，请使用原画直链');
@@ -325,12 +363,32 @@
         });
       }
 
-      modeDirect.addEventListener('click', () => { useDirect(); hideAudioMenu(); });
-      modeHls.addEventListener('click', useHls);
+      // ---- 清晰度菜单（原画直链 / 三档转码）----
+      const qualityBtn = document.getElementById('quality-menu-btn');
+      const qualityDropdown = document.getElementById('quality-dropdown');
+      if (qualityBtn) {
+        qualityBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          qualityDropdown.classList.toggle('open');
+          qualityBtn.setAttribute('aria-expanded', qualityDropdown.classList.contains('open'));
+        });
+        qualityDropdown.addEventListener('click', (e) => {
+          const item = e.target.closest('.track-item');
+          if (!item) return;
+          selectQuality(item.dataset.quality);
+        });
+      }
+      document.addEventListener('click', (e) => {
+        if (qualityDropdown && !qualityDropdown.contains(e.target) &&
+            e.target !== qualityBtn) {
+          qualityDropdown.classList.remove('open');
+          if (qualityBtn) qualityBtn.setAttribute('aria-expanded', 'false');
+        }
+      });
 
-      // 非浏览器友好格式（MKV/FLV/AVI 等）默认尝试转码播放
+      // 非浏览器友好格式（MKV/FLV/AVI 等）默认走 720p 转码播放
       if (!nativePlayable) {
-        useHls();
+        selectQuality('720p');
       }
     })();
   </script>
@@ -395,7 +453,7 @@
           el.kind = 'subtitles';
           el.label = label;
           el.srclang = s.lang || 'und';
-          el.src = '/hls/' + videoId + '/sub-' + i + '.vtt';
+          el.src = '/hls/' + videoId + '/subs/sub-' + i + '.vtt';
           player.appendChild(el);
           if (s.default && currentLabel === null) currentLabel = label;
         });
@@ -823,6 +881,172 @@
   </script>
   {{end}}
 
+  {{if .StoreOn}}
+  <!-- 文件下载分享弹窗 -->
+  <div class="scrape-modal pl-modal" id="share-modal" hidden>
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <div class="scrape-dialog-head">
+        <h3 id="share-title">分享下载链接</h3>
+        <button type="button" class="scrape-close" data-share-close aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <div class="share-form-row">
+          <label for="share-hours">有效期</label>
+          <select id="share-hours" class="pl-rename-input">
+            <option value="24">1 天</option>
+            <option value="168" selected>7 天</option>
+            <option value="720">30 天</option>
+          </select>
+        </div>
+        <div class="share-form-row">
+          <label for="share-passcode">提取码（可选）</label>
+          <input type="text" class="pl-rename-input" id="share-passcode" maxlength="64"
+                 placeholder="留空则任何人凭链接即可下载" autocomplete="off">
+        </div>
+        <button type="button" id="share-create-btn">生成链接</button>
+        <div id="share-result" class="share-result" hidden></div>
+        <h4 class="share-list-title">当前视频的分享</h4>
+        <div class="pl-pick-list" id="share-list"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const modal = document.getElementById('share-modal');
+      const videoId = {{printf "%q" .Video.ID}};
+      const hoursSel = document.getElementById('share-hours');
+      const passcodeInput = document.getElementById('share-passcode');
+      const resultBox = document.getElementById('share-result');
+      const listBox = document.getElementById('share-list');
+
+      async function shareFetch(url, options) {
+        const res = await fetch(url, options);
+        if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+        if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); throw new Error('503'); }
+        if (!res.ok) {
+          let msg = 'HTTP ' + res.status;
+          try { const d = await res.json(); if (d.error) msg = d.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        return res.json();
+      }
+      function closeModal() { modal.hidden = true; document.body.style.overflow = ''; }
+      document.querySelectorAll('[data-share-close]').forEach((b) => b.addEventListener('click', closeModal));
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) closeModal(); });
+
+      function fmtTime(t) {
+        const d = new Date(t);
+        const pad = (n) => String(n).padStart(2, '0');
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+          ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+      }
+
+      async function renderList() {
+        listBox.textContent = '加载中…';
+        const data = await shareFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/shares');
+        listBox.textContent = '';
+        const shares = data.shares || [];
+        if (!shares.length) {
+          const p = document.createElement('p');
+          p.className = 'pl-hint';
+          p.textContent = '还没有分享链接。';
+          listBox.appendChild(p);
+          return;
+        }
+        const now = Date.now();
+        shares.forEach((sh) => {
+          const row = document.createElement('div');
+          row.className = 'pl-pick-row share-row';
+          const expired = new Date(sh.expiresAt).getTime() <= now;
+          const label = document.createElement('span');
+          label.className = 'pl-pick-name';
+          label.textContent = (sh.hasPasscode ? '🔒 有提取码 · ' : '🔓 无提取码 · ') +
+            (expired ? '已过期' : '有效期至 ' + fmtTime(sh.expiresAt));
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'share-del-btn';
+          del.textContent = '撤销';
+          del.addEventListener('click', async () => {
+            if (!confirm('确定撤销该分享链接？')) return;
+            del.disabled = true;
+            try {
+              await shareFetch('/api/v1/shares/' + encodeURIComponent(sh.token), { method: 'DELETE' });
+              row.remove();
+              if (!listBox.children.length) renderList();
+            } catch (err) {
+              alert('撤销失败: ' + err.message);
+              del.disabled = false;
+            }
+          });
+          row.append(label, del);
+          listBox.appendChild(row);
+        });
+      }
+
+      document.getElementById('share-create-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('share-create-btn');
+        btn.disabled = true;
+        try {
+          const created = await shareFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/shares', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              hours: Number(hoursSel.value),
+              passcode: passcodeInput.value.trim()
+            })
+          });
+          const url = location.origin + '/share/' + created.token;
+          resultBox.hidden = false;
+          resultBox.innerHTML = '';
+          const link = document.createElement('input');
+          link.type = 'text';
+          link.className = 'pl-rename-input share-link-input';
+          link.value = url;
+          link.readOnly = true;
+          const copyBtn = document.createElement('button');
+          copyBtn.type = 'button';
+          copyBtn.textContent = '复制链接';
+          copyBtn.addEventListener('click', async () => {
+            try {
+              await navigator.clipboard.writeText(url);
+              copyBtn.textContent = '已复制';
+            } catch (_) {
+              link.select();
+              document.execCommand('copy');
+              copyBtn.textContent = '已复制';
+            }
+          });
+          const hint = document.createElement('p');
+          hint.className = 'pl-hint';
+          hint.textContent = created.hasPasscode
+            ? '请把提取码「' + passcodeInput.value.trim() + '」通过其他渠道单独告知对方。'
+            : '任何获得链接的人在有效期内均可匿名下载。';
+          const row = document.createElement('div');
+          row.className = 'share-link-row';
+          row.append(link, copyBtn);
+          resultBox.append(row, hint);
+          passcodeInput.value = '';
+          renderList();
+        } catch (err) {
+          if (err.message !== '未登录' && err.message !== '503') alert('创建失败: ' + err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      document.getElementById('share-open-btn').addEventListener('click', () => {
+        modal.hidden = false;
+        document.body.style.overflow = 'hidden';
+        resultBox.hidden = true;
+        renderList().catch((err) => {
+          if (err.message !== '未登录' && err.message !== '503') listBox.textContent = '加载失败: ' + err.message;
+        });
+      });
+    })();
+  </script>
+  {{end}}
+
   <!-- 播放器增强：倍速、字幕字号、键盘快捷键（原画与转码通用，无条件渲染） -->
   <script>
     (() => {
@@ -899,7 +1123,7 @@
         if (e.target === player) return true;
         const tag = (e.target.tagName || '').toLowerCase();
         if (['input', 'textarea', 'select', 'button'].includes(tag)) return true;
-        return Boolean(document.querySelector('.scrape-modal:not([hidden]), .pl-modal:not([hidden])'));
+        return Boolean(document.querySelector('.scrape-modal:not([hidden]), .pl-modal:not([hidden]), #share-modal:not([hidden])'));
       }
       document.addEventListener('keydown', (e) => {
         if (shouldIgnore(e)) return;

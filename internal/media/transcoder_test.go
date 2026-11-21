@@ -42,7 +42,7 @@ func itoa(n int) string {
 
 func TestSegmentPathValidation(t *testing.T) {
 	dir := t.TempDir()
-	sess := newSession(&Video{ID: "abc"}, dir)
+	sess := newSession(&Video{ID: "abc"}, dir, Quality720p)
 
 	// 放一个合法分片
 	valid := filepath.Join(dir, "seg-00001.ts")
@@ -96,7 +96,7 @@ func TestTranscoderEndToEnd(t *testing.T) {
 		t.Fatal("ffmpeg 可用时 Available 应为 true")
 	}
 
-	sess, err := tc.Ensure(v)
+	sess, err := tc.Ensure(v, Quality720p)
 	if err != nil {
 		t.Fatalf("首次 Ensure 失败: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestTranscoderEndToEnd(t *testing.T) {
 	}
 
 	// 完成后再次 Ensure 应直接复用，不再启动新进程
-	sess2, err := tc.Ensure(v)
+	sess2, err := tc.Ensure(v, Quality720p)
 	if err != nil || sess2 != sess {
 		t.Fatalf("完成态会话应被复用，err=%v same=%v", err, sess2 == sess)
 	}
@@ -175,24 +175,24 @@ func TestTranscoderBusyAndQueue(t *testing.T) {
 	}
 	defer tc.Close()
 
-	if _, err := tc.Ensure(a); err != nil {
+	if _, err := tc.Ensure(a, Quality720p); err != nil {
 		t.Fatalf("启动第一个转码失败: %v", err)
 	}
 	// 等第一个真正跑起来
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) && tc.Get(a.ID).Status().State != "running" {
+	for time.Now().Before(deadline) && tc.Get(a.ID, Quality720p).Status().State != "running" {
 		time.Sleep(100 * time.Millisecond)
 	}
-	if tc.Get(a.ID).Status().State != "running" {
+	if tc.Get(a.ID, Quality720p).Status().State != "running" {
 		t.Fatal("第一个会话未进入 running")
 	}
 
 	// 第二个应立即 busy 并入队
-	if _, err := tc.Ensure(b); err != ErrTranscoderBusy {
+	if _, err := tc.Ensure(b, Quality720p); err != ErrTranscoderBusy {
 		t.Fatalf("槽位满应返回 ErrTranscoderBusy，got=%v", err)
 	}
 	// 入队后再请求不应再报 busy，而是返回 starting 会话
-	sessB, err := tc.Ensure(b)
+	sessB, err := tc.Ensure(b, Quality720p)
 	if err != nil {
 		t.Fatalf("排队会话再次请求应直接返回，got=%v", err)
 	}
@@ -203,7 +203,7 @@ func TestTranscoderBusyAndQueue(t *testing.T) {
 
 func TestAssetPathValidation(t *testing.T) {
 	dir := t.TempDir()
-	sess := newSession(&Video{ID: "abc"}, dir)
+	sess := newSession(&Video{ID: "abc"}, dir, Quality720p)
 
 	// 简单布局文件
 	for _, name := range []string{"seg-00001.ts", "index.m3u8"} {
@@ -211,11 +211,10 @@ func TestAssetPathValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 多音轨变体布局文件
+	// 多音轨变体布局文件（内嵌字幕已改为视频级共享，不再出现在会话目录）
 	for _, name := range []string{
 		"master.m3u8", "out-0.m3u8", "out-a0.m3u8", "out-a1.m3u8",
 		"out-0-00000.ts", "out-a0-00000.ts", "out-a1-00001.ts",
-		"sub-0.vtt", "sub-1.vtt", // 内嵌字幕提取产物
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
@@ -226,7 +225,6 @@ func TestAssetPathValidation(t *testing.T) {
 		"index.m3u8", "master.m3u8", "seg-00001.ts",
 		"out-0.m3u8", "out-a0.m3u8",
 		"out-0-00000.ts", "out-a1-00001.ts",
-		"sub-0.vtt", "sub-1.vtt",
 	}
 	for _, name := range valid {
 		if _, err := sess.AssetPath(name); err != nil {
@@ -234,17 +232,19 @@ func TestAssetPathValidation(t *testing.T) {
 		}
 	}
 
+	// sub-N.vtt 已移出会话白名单：会话目录拒绝，统一走 Transcoder.SubAssetPath
 	for _, bad := range []string{
-		"../master.m3u8",  // 路径穿越
-		"ffmpeg.log",      // 日志不可读
-		"seg-1.ts",        // 编号位数不对
-		"out-a0.ts",       // 变体分片必须带 5 位编号
-		"out-.m3u8",       // 变体名为空
-		"out-a0/evil.ts",  // 子目录
-		"out-a0-0001.vtt", // 错误后缀
-		"sub-.vtt",        // 字幕序号不能为空
-		"sub-0.txt",       // 字幕仅允许 vtt
-		"subx-0.vtt",      // 前缀必须精确
+		"sub-0.vtt", "sub-1.vtt",
+		"../master.m3u8", // 路径穿越
+		"ffmpeg.log",     // 日志不可读
+		"seg-1.ts",       // 编号位数不对
+		"out-a0.ts",      // 变体分片必须带 5 位编号
+		"out-.m3u8",      // 变体名为空
+		"out-a0/evil.ts", // 子目录
+		"out-a0-0001.vtt",
+		"sub-.vtt",
+		"sub-0.txt",
+		"subx-0.vtt",
 	} {
 		if _, err := sess.AssetPath(bad); err == nil {
 			t.Errorf("非法资源名 %q 应被拒绝", bad)
@@ -311,7 +311,7 @@ func TestTranscoderMultiAudio(t *testing.T) {
 	}
 	defer tc.Close()
 
-	sess, err := tc.Ensure(v)
+	sess, err := tc.Ensure(v, Quality720p)
 	if err != nil {
 		t.Fatalf("Ensure 失败: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestTranscoderExtractsEmbeddedSubtitles(t *testing.T) {
 	}
 	defer tc.Close()
 
-	sess, err := tc.Ensure(v)
+	sess, err := tc.Ensure(v, Quality720p)
 	if err != nil {
 		t.Fatalf("Ensure 失败: %v", err)
 	}
@@ -425,11 +425,11 @@ func TestTranscoderExtractsEmbeddedSubtitles(t *testing.T) {
 		}
 	}
 
-	// 两路字幕都应被提取为 sub-0.vtt / sub-1.vtt，且能通过白名单访问
+	// 字幕提取到视频级共享目录 <root>/<id>/subs/，经 SubAssetPath 白名单访问
 	for _, name := range []string{"sub-0.vtt", "sub-1.vtt"} {
-		p, err := sess.AssetPath(name)
+		p, err := tc.SubAssetPath(v.ID, name)
 		if err != nil {
-			t.Fatalf("提取产物 %s 应可访问: %v", name, err)
+			t.Fatalf("共享字幕 %s 应可访问: %v", name, err)
 		}
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -438,6 +438,84 @@ func TestTranscoderExtractsEmbeddedSubtitles(t *testing.T) {
 		if !strings.HasPrefix(string(raw), "WEBVTT") {
 			t.Fatalf("%s 应为 WebVTT，got %q", name, string(raw)[:min(20, len(raw))])
 		}
+	}
+	// 会话目录不再提供字幕
+	if _, err := sess.AssetPath("sub-0.vtt"); err == nil {
+		t.Fatal("会话 AssetPath 不应再放行 sub-N.vtt")
+	}
+}
+
+// TestSubAssetPathValidation 纯逻辑验证共享字幕白名单与路径穿越防护（无需 ffmpeg）。
+func TestSubAssetPathValidation(t *testing.T) {
+	root := t.TempDir()
+	tc, err := NewTranscoder(root, "ffmpeg", "ffprobe", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tc.Close()
+
+	subsDir := filepath.Join(root, "vid1", hlsSubDir)
+	if err := os.MkdirAll(subsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subsDir, "sub-0.vtt"), []byte("WEBVTT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := tc.SubAssetPath("vid1", "sub-0.vtt")
+	if err != nil {
+		t.Fatalf("合法共享字幕应放行: %v", err)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(p), "vid1/subs/sub-0.vtt") {
+		t.Fatalf("共享字幕路径异常: %s", p)
+	}
+	for _, bad := range []string{
+		"", "../sub-0.vtt", "sub-0.txt", "sub-.vtt", "subx-0.vtt",
+		"sub-0.VTT", "sub-12.vtt/../../x",
+	} {
+		if _, err := tc.SubAssetPath("vid1", bad); err == nil {
+			t.Errorf("非法字幕名 %q 应被拒绝", bad)
+		}
+	}
+	// 不存在的文件也应报错
+	if _, err := tc.SubAssetPath("vid1", "sub-9.vtt"); err == nil {
+		t.Error("不存在的字幕应返回错误")
+	}
+	// 其他视频的字幕不可串读
+	if _, err := tc.SubAssetPath("vid2", "sub-0.vtt"); err == nil {
+		t.Error("跨视频读取共享字幕应被拒绝")
+	}
+}
+
+// TestQualitySessionIsolation 验证同一视频的不同档位拥有独立会话键与产物目录（纯逻辑，无需 ffmpeg）。
+func TestQualitySessionIsolation(t *testing.T) {
+	root := t.TempDir()
+	tc, err := NewTranscoder(root, "/nonexistent/ffmpeg-bin", "ffprobe", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tc.Close()
+
+	v := &Video{ID: "vq"}
+	// 直接构造两个不同档位的会话，模拟 Ensure 的落盘结构
+	s720 := newSession(v, filepath.Join(root, "vq", Quality720p), Quality720p)
+	s480 := newSession(v, filepath.Join(root, "vq", Quality480p), Quality480p)
+	tc.mu.Lock()
+	tc.sessions[sessionKey("vq", Quality720p)] = s720
+	tc.sessions[sessionKey("vq", Quality480p)] = s480
+	tc.mu.Unlock()
+
+	if tc.Get("vq", Quality720p) != s720 || tc.Get("vq", Quality480p) != s480 {
+		t.Fatal("不同档位应解析到各自独立的会话")
+	}
+	if tc.Get("vq", "bad-q") != s720 {
+		t.Fatal("非法档位应归一化到 720p 会话")
+	}
+	if s720.dir == s480.dir {
+		t.Fatal("不同档位的产物目录必须隔离")
+	}
+	if filepath.Base(s720.dir) != Quality720p || filepath.Base(s480.dir) != Quality480p {
+		t.Fatalf("会话目录末级应为档位名: %s / %s", s720.dir, s480.dir)
 	}
 }
 
@@ -459,7 +537,7 @@ func TestTranscoderUnavailable(t *testing.T) {
 	if tc.Available() {
 		t.Fatal("不存在的 ffmpeg 路径应判定为不可用")
 	}
-	if _, err := tc.Ensure(&Video{ID: "x"}); err != ErrTranscoderDisabled {
+	if _, err := tc.Ensure(&Video{ID: "x"}, Quality720p); err != ErrTranscoderDisabled {
 		t.Fatalf("ffmpeg 不可用时应返回 ErrTranscoderDisabled，got=%v", err)
 	}
 }
