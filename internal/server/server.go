@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /watch/{id}", s.handleWatch)
 	mux.HandleFunc("GET /shows/{id}", s.handleShowPage)
 	mux.HandleFunc("GET /stats", s.handleStats)
+	mux.HandleFunc("GET /search", s.handleSearch)
 	mux.HandleFunc("GET /api/v1/shows", s.handleAPIListShows)
 	mux.HandleFunc("GET /api/v1/shows/{id}", s.handleAPIGetShow)
 	mux.HandleFunc("GET /api/v1/videos", s.handleAPIList)

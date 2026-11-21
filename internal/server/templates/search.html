@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="stats-heading">🔍 搜索</h2>
+
+    <form class="toolbar" method="get" action="/search">
+      <div class="search-box">
+        <input type="search" name="q" value="{{.Query}}" placeholder="搜索片名、演员、导演、文件名…" aria-label="搜索">
+        <button type="submit">搜索</button>
+        {{if .Query}}<a class="clear-search" href="/search">清除</a>{{end}}
+      </div>
+    </form>
+
+    {{if not .Query}}
+    <div class="empty">
+      <p>输入关键字开始搜索。</p>
+      <p class="hint">支持匹配刮削片名、原名、演员、导演、类型，以及文件名与路径。</p>
+    </div>
+    {{else if .Videos}}
+    <p class="count">找到 {{.Count}} 个与「{{.Query}}」匹配的视频</p>
+    <div class="video-grid">
+      {{range .Videos}}
+      {{$v := .}}
+      {{$p := index $.State.Progress $v.ID}}
+      {{$md := index $.Metadata $v.ID}}
+      <div class="video-card-wrap">
+        <a class="video-card" href="/watch/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and $md $md.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+            {{if index $.State.Favs $v.ID}}<span class="fav-badge" title="已收藏">⭐</span>{{end}}
+            {{if hasProgress $p.Position $p.Duration}}
+            <div class="progress-bar" title="已看到 {{formatDuration $p.Position}} / {{formatDuration $p.Duration}}">
+              <div class="progress-fill" style="width: {{progressPercent $p.Position $p.Duration}}%"></div>
+            </div>
+            {{end}}
+          </div>
+          <div class="meta">
+            {{if and $md $md.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$md.Title}}{{if $md.Year}} <span class="meta-year">({{$md.Year}})</span>{{end}}</h2>
+            {{if ne $md.Title $v.Name}}<p class="video-original-name">{{$v.Name}}</p>{{end}}
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+            <p class="video-path">{{$v.RelPath}}</p>
+            {{if and $md $md.Rating}}
+            <p class="meta-rating">⭐ {{printf "%.1f" $md.Rating}}{{if $md.Runtime}} · {{$md.Runtime}} 分钟{{end}}{{if $md.Genres}} · {{index $md.Genres 0}}{{end}}</p>
+            {{end}}
+            {{if hasProgress $p.Position $p.Duration}}
+            <p class="resume-hint">▶ 看到 {{formatDuration $p.Position}}{{if gt $p.Duration 0.0}} / {{formatDuration $p.Duration}}{{end}}</p>
+            {{end}}
+          </div>
+        </a>
+        {{if $.StoreOn}}
+        <button type="button" class="fav-toggle {{if index $.State.Favs $v.ID}}is-fav{{end}}"
+                data-id="{{$v.ID}}" data-fav="{{if index $.State.Favs $v.ID}}true{{else}}false{{end}}"
+                title="{{if index $.State.Favs $v.ID}}取消收藏{{else}}收藏{{end}}"
+                aria-label="收藏切换">☆</button>
+        <button type="button" class="pl-add-btn" data-video-id="{{$v.ID}}"
+                title="加入播放列表" aria-label="加入播放列表">＋</button>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty">
+      <p>没有找到与「{{.Query}}」匹配的视频。</p>
+      <p class="hint">换个关键字试试，支持片名、演员、导演、类型与文件名。</p>
+    </div>
+    {{end}}
+  </main>
+
+  {{if .StoreOn}}
+  <!-- 加入播放列表选择（精简版，仅搜索页需要的加入流程） -->
+  <div class="scrape-modal pl-modal" id="pl-add-modal" hidden>
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="pl-add-title">
+      <div class="scrape-dialog-head">
+        <h3 id="pl-add-title">加入播放列表</h3>
+        <button type="button" class="scrape-close" data-pl-close aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <div class="pl-pick-list" id="pl-pick-list"></div>
+        <div class="pl-create-inline">
+          <input type="text" class="pl-rename-input" id="pl-new-name" maxlength="100" placeholder="新列表名称…" aria-label="新列表名称">
+          <button type="button" id="pl-create-join-btn">新建并加入</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <span>vedio-website · Go + Docker · NAS 视频站</span>
+  </footer>
+
+  <script>
+    // 卡片上的收藏切换
+    document.querySelectorAll('.fav-toggle').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const id = btn.dataset.id;
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/v1/videos/' + id + '/favorite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); return; }
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          btn.dataset.fav = String(data.favorite);
+          btn.classList.toggle('is-fav', data.favorite);
+          btn.title = data.favorite ? '取消收藏' : '收藏';
+        } catch (err) {
+          alert('收藏操作失败: ' + err);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // 加入播放列表：精简版，仅保留搜索页卡片「＋」所需流程
+    (() => {
+      const modal = document.getElementById('pl-add-modal');
+      const pickList = document.getElementById('pl-pick-list');
+      const newName = document.getElementById('pl-new-name');
+      let targetVideoId = null;
+
+      async function plFetch(url, options) {
+        const res = await fetch(url, options);
+        if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+        if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); throw new Error('503'); }
+        if (!res.ok) {
+          let msg = 'HTTP ' + res.status;
+          try { const d = await res.json(); if (d.error) msg = d.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        return res.json();
+      }
+
+      function openModal() { modal.hidden = false; document.body.style.overflow = 'hidden'; }
+      function closeModal() { modal.hidden = true; document.body.style.overflow = ''; }
+      document.querySelectorAll('[data-pl-close]').forEach((b) => b.addEventListener('click', closeModal));
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+      async function openAdd(videoId) {
+        targetVideoId = videoId;
+        pickList.textContent = '加载中…';
+        newName.value = '';
+        openModal();
+        try {
+          const [all, mine] = await Promise.all([
+            plFetch('/api/v1/playlists'),
+            plFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/playlists')
+          ]);
+          renderPick(all.playlists || [], mine.playlists || []);
+        } catch (err) {
+          if (err.message !== '未登录' && err.message !== '503') {
+            pickList.textContent = '加载失败: ' + err.message;
+          }
+        }
+      }
+
+      function renderPick(playlists, members) {
+        pickList.textContent = '';
+        if (!playlists.length) {
+          const p = document.createElement('p');
+          p.className = 'pl-hint';
+          p.textContent = '还没有播放列表，请在下方新建。';
+          pickList.appendChild(p);
+          return;
+        }
+        const memberIds = new Set(members.map((m) => m.id));
+        playlists.forEach((pl) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'pl-pick-row';
+          const label = document.createElement('span');
+          label.className = 'pl-pick-name';
+          label.textContent = pl.name + '（' + pl.itemCount + '）';
+          const status = document.createElement('span');
+          status.className = 'pl-pick-status';
+          const joined = memberIds.has(pl.id);
+          status.textContent = joined ? '✓ 已在列表' : '加入';
+          row.append(label, status);
+          row.addEventListener('click', () => join(pl.id, row, status));
+          pickList.appendChild(row);
+        });
+      }
+
+      async function join(pid, row, statusEl) {
+        if (!targetVideoId) return;
+        row.disabled = true;
+        try {
+          const resp = await plFetch('/api/v1/playlists/' + encodeURIComponent(pid) + '/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId: targetVideoId })
+          });
+          statusEl.textContent = resp.added ? '✓ 已加入（新增 1）' : '✓ 已在列表';
+        } catch (err) {
+          alert('加入失败: ' + err.message);
+          row.disabled = false;
+        }
+      }
+
+      document.querySelectorAll('.pl-add-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openAdd(btn.dataset.videoId);
+        });
+      });
+
+      document.getElementById('pl-create-join-btn')?.addEventListener('click', async () => {
+        const name = newName.value.trim();
+        if (!name) { alert('请输入列表名称'); return; }
+        try {
+          const pl = await plFetch('/api/v1/playlists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+          });
+          await plFetch('/api/v1/playlists/' + encodeURIComponent(pl.playlist.id) + '/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId: targetVideoId })
+          });
+          closeModal();
+          alert('已新建并加入「' + pl.playlist.name + '」');
+        } catch (err) {
+          alert('创建失败: ' + err.message);
+        }
+      });
+    })();
+  </script>
+  {{end}}
+</body>
+</html>

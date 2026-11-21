@@ -255,3 +255,33 @@ func TestLibraryRemove(t *testing.T) {
 		t.Fatalf("期望 Len 仍为 1，实际 %d", lib.Len())
 	}
 }
+
+// TestQueryKeywordMatchesMetadata 验证关键字能命中 NFO 元信息中的中文片名、
+// 原名、类型、导演与演员，同时文件名/路径的旧匹配行为保持不变。
+func TestQueryKeywordMatchesMetadata(t *testing.T) {
+	lib, _ := newTestLibrary(t, map[string]string{
+		"films/inception.mp4":    "x",
+		"films/inception.nfo":    "<movie><title>盗梦空间</title><originaltitle>Inception</originaltitle><genre>科幻</genre><genre>动作</genre><director>诺兰</director><actor><name>小李子</name></actor></movie>",
+		"plain/random-video.mkv": "y",
+	})
+	if _, err := lib.Scan(); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := map[string]int{
+		"盗梦空间":      1, // 中文片名
+		"inception": 1, // 原名（大小写不敏感）
+		"科幻":        1, // 类型
+		"诺兰":        1, // 导演
+		"小李子":       1, // 演员
+		"random":    1, // 文件名旧匹配不回归
+		"films":     1, // 路径片段命中 films/ 下的视频
+		"plain":     1, // 另一个目录的路径片段
+		"纪录片":       0, // 无命中
+	}
+	for keyword, want := range cases {
+		if got := lib.Query(Query{Keyword: keyword}); len(got) != want {
+			t.Errorf("关键字 %q 期望命中 %d 个，实际 %d", keyword, want, len(got))
+		}
+	}
+}
