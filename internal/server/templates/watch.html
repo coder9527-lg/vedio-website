@@ -92,6 +92,11 @@
         </button>
         <div class="track-dropdown" id="cue-dropdown" role="menu"></div>
       </div>
+      {{if .StoreOn}}
+      <div class="track-menu" id="skip-menu-wrap">
+        <button type="button" id="skip-open-btn" class="track-btn">跳过片头片尾</button>
+      </div>
+      {{end}}
     </div>
     <div class="player-wrap">
       <video id="player" controls preload="metadata" playsinline
@@ -1115,6 +1120,242 @@
           if (err.message !== '未登录' && err.message !== '503') listBox.textContent = '加载失败: ' + err.message;
         });
       });
+    })();
+  </script>
+  {{end}}
+
+  {{if .StoreOn}}
+  <!-- 跳过片头片尾设置弹窗：初始状态经 data-* 注入，由下方 IIFE 读取 -->
+  <div class="scrape-modal pl-modal" id="skip-modal" hidden
+       data-present="{{if .Skip}}1{{else}}0{{end}}"
+       data-intro="{{if .Skip}}{{.Skip.IntroSeconds}}{{else}}0{{end}}"
+       data-outro="{{if .Skip}}{{.Skip.OutroSeconds}}{{else}}0{{end}}"
+       data-enabled="{{if and .Skip .Skip.Enabled}}1{{else}}0{{end}}">
+    <div class="scrape-dialog pl-dialog" role="dialog" aria-modal="true" aria-labelledby="skip-title">
+      <div class="scrape-dialog-head">
+        <h3 id="skip-title">跳过片头片尾</h3>
+        <button type="button" class="scrape-close" data-skip-close aria-label="关闭">✕</button>
+      </div>
+      <div class="scrape-body">
+        <div class="share-form-row">
+          <label for="skip-intro-input">片头时长（秒）</label>
+          <div class="skip-input-line">
+            <input type="number" min="0" step="1" class="pl-rename-input" id="skip-intro-input"
+                   placeholder="例如 90 = 开头 1 分半">
+            <button type="button" id="skip-mark-intro">用当前位置填充</button>
+          </div>
+        </div>
+        <div class="share-form-row">
+          <label for="skip-outro-input">片尾时长（距视频结尾的秒数）</label>
+          <div class="skip-input-line">
+            <input type="number" min="0" step="1" class="pl-rename-input" id="skip-outro-input"
+                   placeholder="例如 90 = 最后 1 分半自动结束">
+            <button type="button" id="skip-mark-outro">用当前位置填充</button>
+          </div>
+        </div>
+        <div class="share-form-row">
+          <label class="skip-switch-line">
+            <input type="checkbox" id="skip-enabled">
+            <span>启用自动跳过片头片尾</span>
+          </label>
+        </div>
+        <div class="skip-actions">
+          <button type="button" id="skip-save-btn">保存设置</button>
+          <button type="button" class="btn-secondary" id="skip-clear-btn">清除全部设置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="skip-toast" id="skip-toast" role="status" aria-live="polite" hidden></div>
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const modal = document.getElementById('skip-modal');
+      const openBtn = document.getElementById('skip-open-btn');
+      const introInput = document.getElementById('skip-intro-input');
+      const outroInput = document.getElementById('skip-outro-input');
+      const enabledInput = document.getElementById('skip-enabled');
+      const saveBtn = document.getElementById('skip-save-btn');
+      const clearBtn = document.getElementById('skip-clear-btn');
+      const toast = document.getElementById('skip-toast');
+      const videoId = {{printf "%q" .Video.ID}};
+      const apiURL = '/api/v1/videos/' + encodeURIComponent(videoId) + '/skip';
+
+      // 引擎运行态：弹窗保存成功后同步更新，无需刷新页面
+      const cfg = {
+        intro: Number(modal.dataset.intro) || 0,
+        outro: Number(modal.dataset.outro) || 0,
+        enabled: modal.dataset.enabled === '1',
+      };
+      window.__skipCfg = cfg; // 供同页自动跳过引擎读取
+      let toastTimer = null;
+
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.hidden = false;
+        requestAnimationFrame(() => toast.classList.add('show'));
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          toast.classList.remove('show');
+          setTimeout(() => { toast.hidden = true; }, 250);
+        }, 2500);
+      }
+      window.__showSkipToast = showToast;
+
+      async function skipFetch(url, options) {
+        const res = await fetch(url, options);
+        if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+        if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); throw new Error('503'); }
+        if (!res.ok) {
+          let msg = 'HTTP ' + res.status;
+          try { const d = await res.json(); if (d.error) msg = d.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        return res.json();
+      }
+
+      function openModal() {
+        // 每次打开回显当前引擎态（含未刷新前的最近保存结果）
+        introInput.value = cfg.intro > 0 ? Math.floor(cfg.intro) : '';
+        outroInput.value = cfg.outro > 0 ? Math.floor(cfg.outro) : '';
+        enabledInput.checked = cfg.enabled;
+        modal.hidden = false;
+        document.body.style.overflow = 'hidden';
+      }
+      function closeModal() {
+        modal.hidden = true;
+        document.body.style.overflow = '';
+      }
+      openBtn.addEventListener('click', openModal);
+      document.querySelectorAll('[data-skip-close]').forEach((b) => b.addEventListener('click', closeModal));
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) closeModal(); });
+
+      // 标记当前播放位置：片头直接取 currentTime；片尾换算为「距结尾的秒数」
+      document.getElementById('skip-mark-intro').addEventListener('click', () => {
+        if (!isFinite(player.currentTime)) return;
+        introInput.value = Math.floor(player.currentTime);
+      });
+      document.getElementById('skip-mark-outro').addEventListener('click', () => {
+        if (!isFinite(player.duration) || player.duration <= 0) {
+          alert('视频时长尚未加载，无法标记片尾，请稍后再试');
+          return;
+        }
+        outroInput.value = Math.max(0, Math.floor(player.duration - player.currentTime));
+      });
+
+      // 前端预校验与服务端同规则；服务端仍是最终权威
+      function readForm() {
+        const intro = Number(introInput.value) || 0;
+        const outro = Number(outroInput.value) || 0;
+        if (intro < 0 || outro < 0) throw new Error('片头/片尾秒数不能为负数');
+        if (isFinite(player.duration) && player.duration > 0) {
+          if (intro >= player.duration) throw new Error('片头时长不能大于等于视频总时长');
+          if (intro + outro > player.duration + 0.001) throw new Error('片头与片尾区间重叠或超过总时长');
+        }
+        return { intro, outro, enabled: enabledInput.checked };
+      }
+
+      saveBtn.addEventListener('click', async () => {
+        let form;
+        try {
+          form = readForm();
+        } catch (e) {
+          alert(e.message);
+          return;
+        }
+        saveBtn.disabled = true;
+        try {
+          const data = await skipFetch(apiURL, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              introSeconds: form.intro,
+              outroSeconds: form.outro,
+              enabled: form.enabled,
+              duration: isFinite(player.duration) ? player.duration : 0,
+            }),
+          });
+          // 以服务端回读为准同步引擎态
+          const sk = data.skip || {};
+          cfg.intro = Number(sk.introSeconds) || 0;
+          cfg.outro = Number(sk.outroSeconds) || 0;
+          cfg.enabled = Boolean(sk.enabled);
+          modal.dataset.intro = String(cfg.intro);
+          modal.dataset.outro = String(cfg.outro);
+          modal.dataset.enabled = cfg.enabled ? '1' : '0';
+          showToast('已保存跳过设置');
+          closeModal();
+        } catch (e) {
+          if (e.message !== '未登录' && e.message !== '503') alert('保存失败: ' + e.message);
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+
+      clearBtn.addEventListener('click', async () => {
+        if (!confirm('确定清除该视频的全部片头片尾设置吗？')) return;
+        clearBtn.disabled = true;
+        try {
+          await skipFetch(apiURL, { method: 'DELETE' });
+          cfg.intro = 0;
+          cfg.outro = 0;
+          cfg.enabled = false;
+          modal.dataset.present = '0';
+          modal.dataset.intro = '0';
+          modal.dataset.outro = '0';
+          modal.dataset.enabled = '0';
+          introInput.value = '';
+          outroInput.value = '';
+          enabledInput.checked = false;
+          showToast('已清除跳过设置');
+          closeModal();
+        } catch (e) {
+          if (e.message !== '未登录' && e.message !== '503') alert('清除失败: ' + e.message);
+        } finally {
+          clearBtn.disabled = false;
+        }
+      });
+    })();
+  </script>
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const cfg = window.__skipCfg;
+      const showToast = window.__showSkipToast;
+      if (!player || !cfg) return;
+
+      // 会话级守卫：片头每次页面加载最多自动跳一次，片尾最多触发一次。
+      // 用户手动拖回片头区不重跳，尊重显式回拖意图；切清晰度不换 video 元素，守卫不复位。
+      let introSkipped = false;
+      let outroTriggered = false;
+      const hasAutoNext = Boolean({{if .AutoNextURL}}true{{else}}false{{end}});
+
+      function onTimeOrSeek() {
+        if (!cfg.enabled || player.paused) return;
+        const t = player.currentTime;
+        if (!isFinite(t)) return;
+
+        // 片头：duration 未知或配置非法时防御性停用；先置守卫再 seek，杜绝 seek 后仍落区间的循环
+        if (cfg.intro > 0 && isFinite(player.duration) && cfg.intro < player.duration &&
+            !introSkipped && t < cfg.intro) {
+          introSkipped = true;
+          player.currentTime = cfg.intro;
+          showToast('已跳过片头');
+          return;
+        }
+
+        // 片尾：触发点 = duration - outro，到点暂停并派发合成 ended 以复用现有连播链路
+        if (cfg.outro > 0 && isFinite(player.duration) && !outroTriggered &&
+            t >= player.duration - cfg.outro) {
+          outroTriggered = true;
+          player.pause();
+          player.dispatchEvent(new Event('ended'));
+          showToast(hasAutoNext ? '已到片尾，准备连播下一集' : '已到片尾，暂停播放');
+        }
+      }
+      player.addEventListener('timeupdate', onTimeOrSeek);
+      player.addEventListener('seeked', onTimeOrSeek);
     })();
   </script>
   {{end}}

@@ -201,6 +201,17 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := s.loadVideoState()
+	// 片头片尾跳过设置（仅 watch 页单视频点查；读取失败静默降级，不阻断播放页）
+	var skip *store.SkipSetting
+	if s.storeEnabled() {
+		got, err := s.store.GetSkipSetting(v.ID)
+		if err != nil {
+			log.Printf("读取跳过设置失败: %v", err)
+			skip = nil
+		} else {
+			skip = got
+		}
+	}
 	subtitles := s.library.Subtitles(v.ID)
 	if subtitles == nil {
 		subtitles = []*media.Subtitle{}
@@ -262,6 +273,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		PlaylistID     string
 		AutoNextURL    string
 		AutoNextName   string
+		Skip           *store.SkipSetting
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
@@ -276,6 +288,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		PlaylistID:     playlistID,
 		AutoNextURL:    autoNextURL,
 		AutoNextName:   autoNextName,
+		Skip:           skip,
 	})
 }
 

@@ -137,6 +137,13 @@ CREATE TABLE IF NOT EXISTS watch_events (
     duration      REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_watch_events_started ON watch_events(started_at DESC);
+CREATE TABLE IF NOT EXISTS skip_settings (
+    video_id      TEXT PRIMARY KEY,
+    intro_seconds REAL NOT NULL DEFAULT 0,
+    outro_seconds REAL NOT NULL DEFAULT 0,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    updated_at    TIMESTAMP NOT NULL
+);
 `)
 	if err != nil {
 		return err
@@ -490,7 +497,10 @@ func (s *Store) Prune(existing map[string]bool) error {
 			return err
 		}
 		// 只清条目、保留 playlists 表头：空合集仍由用户显式删除
-		_, err := s.db.Exec(`DELETE FROM playlist_item`)
+		if _, err := s.db.Exec(`DELETE FROM playlist_item`); err != nil {
+			return err
+		}
+		_, err := s.db.Exec(`DELETE FROM skip_settings`)
 		return err
 	}
 
@@ -509,7 +519,11 @@ func (s *Store) Prune(existing map[string]bool) error {
 		`DELETE FROM favorites WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(
+		`DELETE FROM playlist_item WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(
-		`DELETE FROM playlist_item WHERE video_id NOT IN (`+inClause+`)`, args...)
+		`DELETE FROM skip_settings WHERE video_id NOT IN (`+inClause+`)`, args...)
 	return err
 }

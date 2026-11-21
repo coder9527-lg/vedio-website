@@ -954,3 +954,43 @@ button:disabled { opacity: .6; cursor: wait; }
 @media (max-width: 600px) {
   .dist-name { flex-basis: 84px; }
 }
+
+/* 跳过片头片尾：弹窗表单布局与顶部提示条 */
+.skip-input-line {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.skip-input-line button { flex-shrink: 0; white-space: nowrap; padding: 8px 12px; }
+.skip-switch-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+.skip-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+.skip-toast {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  padding: 10px 20px;
+  background: var(--card-bg);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity .25s ease;
+  pointer-events: none;
+}
+.skip-toast[hidden] { display: none; }
+.skip-toast.show { opacity: 1; }

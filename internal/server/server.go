@@ -136,6 +136,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/videos/{id}/progress", s.handleProgressPut)
 	mux.HandleFunc("GET /api/v1/videos/{id}/progress", s.handleProgressGet)
 	mux.HandleFunc("DELETE /api/v1/videos/{id}/progress", s.handleProgressDelete)
+	// 片头片尾自动跳过设置（仅在启用持久化时可用，否则返回 503）
+	mux.HandleFunc("GET /api/v1/videos/{id}/skip", s.handleSkipGet)
+	mux.HandleFunc("PUT /api/v1/videos/{id}/skip", s.handleSkipPut)
+	mux.HandleFunc("DELETE /api/v1/videos/{id}/skip", s.handleSkipDelete)
 	mux.HandleFunc("GET /api/v1/favorites", s.handleFavoriteList)
 	mux.HandleFunc("POST /api/v1/videos/{id}/favorite", s.handleFavoriteSet)
 	mux.HandleFunc("GET /api/v1/videos/{id}/favorite", s.handleFavoriteGet)
