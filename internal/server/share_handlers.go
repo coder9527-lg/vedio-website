@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/coder9527-lg/vedio-website/internal/auth"
 	"github.com/coder9527-lg/vedio-website/internal/media"
 	"github.com/coder9527-lg/vedio-website/internal/store"
 )
@@ -22,6 +23,15 @@ var allowedShareHours = map[int]bool{24: true, 168: true, 720: true}
 
 // maxSharePasscodeLen 限制提取码长度。
 const maxSharePasscodeLen = 64
+
+// minSharePasscodeLen 是提取码的最小长度：过短的提取码（如 1 位）在线爆破成本过低。
+const minSharePasscodeLen = 4
+
+// shareLimitKey 把来源 IP 与分享 token 组合成限流键：同一 IP 对不同分享分别计数，
+// 避免一条分享被爆破时波及该 IP 访问的其他分享。
+func shareLimitKey(r *http.Request, token string) string {
+	return auth.ClientIP(r) + "|" + token
+}
 
 // sharePageData 是匿名分享页的模板数据，只暴露单个视频的有限信息。
 type sharePageData struct {
@@ -153,15 +163,22 @@ func (s *Server) handleShareVerify(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	limitKey := shareLimitKey(r, token)
+	if !s.shareLimiter.Allow(limitKey, time.Now()) {
+		s.renderSharePage(w, http.StatusTooManyRequests, sh, v, "尝试次数过多，请 10 分钟后再试")
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		s.renderSharePage(w, http.StatusBadRequest, sh, v, "表单解析失败")
 		return
 	}
 	passcode := r.PostFormValue("passcode")
 	if !sh.VerifyPasscode(passcode) {
+		s.shareLimiter.RecordFailure(limitKey, time.Now())
 		s.renderSharePage(w, http.StatusForbidden, sh, v, "提取码错误，请重试")
 		return
 	}
+	s.shareLimiter.Reset(limitKey)
 	setShareCookie(w, sh, s.cookieSecure)
 	http.Redirect(w, r, "/share/"+token, http.StatusSeeOther)
 }
@@ -183,11 +200,18 @@ func (s *Server) handleShareDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sh.HasPasscode() && !cookieAuthorized(r, sh) {
+		limitKey := shareLimitKey(r, token)
+		if !s.shareLimiter.Allow(limitKey, time.Now()) {
+			http.Error(w, "尝试次数过多，请稍后再试", http.StatusTooManyRequests)
+			return
+		}
 		// Cookie 未命中时允许查询参数携带提取码（便于下载工具直接拉取）
 		if !sh.VerifyPasscode(r.URL.Query().Get("passcode")) {
+			s.shareLimiter.RecordFailure(limitKey, time.Now())
 			http.Error(w, "提取码错误或缺失", http.StatusForbidden)
 			return
 		}
+		s.shareLimiter.Reset(limitKey)
 	}
 	// 复用统一的 Range 文件服务，强制下载文件名
 	serveVideoFile(w, r, v, true)
@@ -229,6 +253,11 @@ func (s *Server) handleShareCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Passcode) > maxSharePasscodeLen {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "提取码不能超过 64 个字符"})
+		return
+	}
+	// 空串表示无码直链；一旦设置提取码，必须达到最小长度以防在线爆破。
+	if req.Passcode != "" && len(req.Passcode) < minSharePasscodeLen {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "提取码至少 4 个字符（不需要提取码请留空）"})
 		return
 	}
 	sh, err := s.store.CreateShare(id, req.Hours, req.Passcode)

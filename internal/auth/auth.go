@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -30,17 +29,7 @@ type Authenticator struct {
 	ttl        time.Duration
 	cookieName string
 
-	maxFails int
-	window   time.Duration
-
-	mu       sync.Mutex
-	failures map[string]*failState
-}
-
-type failState struct {
-	count    int
-	firstAt  time.Time
-	lockedAt time.Time
+	limiter *FailLimiter
 }
 
 // Option 用于调整可选参数，主要服务于测试。
@@ -49,8 +38,7 @@ type Option func(*Authenticator)
 // WithLimit 配置登录失败限流：window 窗口内失败 maxFails 次后锁定到窗口结束。
 func WithLimit(maxFails int, window time.Duration) Option {
 	return func(a *Authenticator) {
-		a.maxFails = maxFails
-		a.window = window
+		a.limiter = NewFailLimiter(maxFails, window)
 	}
 }
 
@@ -71,9 +59,7 @@ func New(password, secret string, ttl time.Duration, opts ...Option) (*Authentic
 		secret:     key,
 		ttl:        ttl,
 		cookieName: CookieName,
-		maxFails:   10,
-		window:     10 * time.Minute,
-		failures:   make(map[string]*failState),
+		limiter:    NewFailLimiter(10, 10*time.Minute),
 	}
 	for _, o := range opts {
 		o(a)
@@ -160,37 +146,17 @@ func (a *Authenticator) CheckPassword(input string) bool {
 
 // AllowLogin 判断某 IP 当前是否可尝试登录（限流）。
 func (a *Authenticator) AllowLogin(ip string, now time.Time) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	st, ok := a.failures[ip]
-	if !ok {
-		return true
-	}
-	if now.Sub(st.firstAt) > a.window {
-		delete(a.failures, ip)
-		return true
-	}
-	// 窗口内达到上限即锁到窗口结束
-	return st.count < a.maxFails
+	return a.limiter.Allow(ip, now)
 }
 
 // RecordFailure 记录一次失败登录。
 func (a *Authenticator) RecordFailure(ip string, now time.Time) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	st, ok := a.failures[ip]
-	if !ok || now.Sub(st.firstAt) > a.window {
-		a.failures[ip] = &failState{count: 1, firstAt: now}
-		return
-	}
-	st.count++
+	a.limiter.RecordFailure(ip, now)
 }
 
 // ResetFailures 登录成功后清空该 IP 的失败记录。
 func (a *Authenticator) ResetFailures(ip string) {
-	a.mu.Lock()
-	delete(a.failures, ip)
-	a.mu.Unlock()
+	a.limiter.Reset(ip)
 }
 
 // ClientIP 取 TCP 连接对端地址（忽略可伪造的 X-Forwarded-For）。

@@ -81,7 +81,7 @@ func TestShareListAndDelete(t *testing.T) {
 	srv, ts, videoID := newPersistTestServer(t)
 	base := ts.URL + "/api/v1/videos/" + videoID + "/shares"
 
-	createShareViaAPI(t, base, `{"hours":24,"passcode":"abc"}`)
+	createShareViaAPI(t, base, `{"hours":24,"passcode":"abcd"}`)
 	createShareViaAPI(t, base, `{"hours":168}`)
 
 	res, err := http.Get(base)
@@ -300,5 +300,89 @@ func TestShareMissingVideo(t *testing.T) {
 	}
 	if got, _ := srv.store.GetShare(sh.Token); got != nil {
 		t.Fatal("悬空分享应被同步删除")
+	}
+}
+
+// TestSharePasscodeMinLength 验证创建分享时提取码的最小长度约束：
+// 空串（无码直链）合法，1~3 位提取码被拒，4 位及以上放行。
+func TestSharePasscodeMinLength(t *testing.T) {
+	_, ts, videoID := newPersistTestServer(t)
+	base := ts.URL + "/api/v1/videos/" + videoID + "/shares"
+
+	for _, short := range []string{"a", "ab", "abc"} {
+		code, _ := createShareViaAPI(t, base, `{"hours":24,"passcode":"`+short+`"}`)
+		if code != http.StatusBadRequest {
+			t.Errorf("过短提取码 %q 应 400，got %d", short, code)
+		}
+	}
+	// 空串=无码分享，仍然合法
+	if code, _ := createShareViaAPI(t, base, `{"hours":24,"passcode":""}`); code != http.StatusCreated {
+		t.Fatalf("无码分享应 201，got %d", code)
+	}
+	// 达到最小长度即放行
+	if code, _ := createShareViaAPI(t, base, `{"hours":24,"passcode":"abcd"}`); code != http.StatusCreated {
+		t.Fatalf("4 位提取码应 201，got %d", code)
+	}
+}
+
+// TestShareVerifyRateLimit 验证提取码校验的按 IP+token 失败限流：
+// 连续失败达到上限后，即使给出正确提取码也返回 429，且不同分享不受牵连。
+func TestShareVerifyRateLimit(t *testing.T) {
+	srv, ts, videoID := newPersistTestServer(t)
+	const passcode = "secret123"
+	sh, err := srv.store.CreateShare(videoID, 24, passcode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyURL := ts.URL + "/share/" + sh.Token + "/verify"
+
+	// 默认窗口（10 分钟）内允许 10 次失败：前 10 次错码均为 403
+	for i := 0; i < 10; i++ {
+		res, err := http.PostForm(verifyURL, url.Values{"passcode": {"wrong"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("第 %d 次错码应 403，got %d", i+1, res.StatusCode)
+		}
+	}
+	// 第 11 次即便给出正确提取码也应被限流（429），证明锁定先于口令校验
+	res, err := http.PostForm(verifyURL, url.Values{"passcode": {passcode}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAllString(t, res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "尝试次数过多") {
+		t.Fatalf("超过失败上限应 429 并提示，got %d", res.StatusCode)
+	}
+
+	// 下载链路的 query 传参同样受同一限流键约束
+	dl, err := http.Get(ts.URL + "/share/" + sh.Token + "/download?passcode=" + passcode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dl.Body.Close()
+	if dl.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("下载 query 校验被限流应 429，got %d", dl.StatusCode)
+	}
+
+	// 另一条分享（不同 token）不应被连带锁定
+	other, err := srv.store.CreateShare(videoID, 24, passcode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noRedirect := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	okRes, err := noRedirect.PostForm(ts.URL+"/share/"+other.Token+"/verify",
+		url.Values{"passcode": {passcode}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	okRes.Body.Close()
+	if okRes.StatusCode != http.StatusSeeOther {
+		t.Fatalf("不同分享的限流键独立，正确提取码应 302，got %d", okRes.StatusCode)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder9527-lg/vedio-website/internal/auth"
 	"github.com/coder9527-lg/vedio-website/internal/media"
@@ -27,6 +28,7 @@ type Server struct {
 	bulkScraper   *media.BulkScraper // 全库批量刮削编排器，与 scraper 同时启用/关闭
 	tmpl          *template.Template
 	authenticator *auth.Authenticator // nil 表示未开启访问密码
+	shareLimiter  *auth.FailLimiter   // 匿名分享提取码的按 IP+token 失败限流
 	cookieSecure  bool
 
 	// 播放会话 → watch_events 行 ID 的内存索引。按 videoID 维度：同一视频的并发
@@ -48,8 +50,11 @@ func New(library *media.Library, thumbs *media.Thumbnailer, transcoder *media.Tr
 		scraper:       scraper,
 		tmpl:          tmpl,
 		authenticator: authenticator,
-		cookieSecure:  cookieSecure,
-		watchSession:  map[string]int64{},
+		// 与登录限流同量级：单 IP 对同一分享 10 分钟内错 10 次即锁到窗口结束，
+		// 防止提取码被脚本化在线爆破（下载工具的 query 传参同样受此约束）。
+		shareLimiter: auth.NewFailLimiter(10, 10*time.Minute),
+		cookieSecure: cookieSecure,
+		watchSession: map[string]int64{},
 	}
 	// 批量刮削与单视频刮削同生命周期：scraper 为 nil（未配 TMDB_API_KEY）时保持 nil
 	if scraper != nil {

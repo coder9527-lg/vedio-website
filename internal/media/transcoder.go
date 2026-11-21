@@ -827,9 +827,11 @@ func (t *Transcoder) Get(videoID, quality string) *session {
 }
 
 // SubAssetPath 返回视频级共享内嵌字幕（subs/sub-N.vtt）的磁盘路径。
-// 文件名沿用 subVTTRE 白名单严格校验，杜绝路径穿越；文件不存在时返回错误。
+// videoID 必须是 makeID 产出的 16 位小写 hex，文件名沿用 subVTTRE 白名单严格校验，
+// 双重校验杜绝路径穿越；文件不存在时返回错误。
 func (t *Transcoder) SubAssetPath(videoID, name string) (string, error) {
-	if name == "" || name != filepath.Base(name) || !subVTTRE.MatchString(name) {
+	if !videoIDRE.MatchString(videoID) ||
+		name == "" || name != filepath.Base(name) || !subVTTRE.MatchString(name) {
 		return "", os.ErrNotExist
 	}
 	p := filepath.Join(t.dir, videoID, hlsSubDir, name)
@@ -1038,6 +1040,9 @@ var (
 	variantRE    = regexp.MustCompile(`^out-[0-9A-Za-z_-]+$`)
 	variantSegRE = regexp.MustCompile(`^out-[0-9A-Za-z_-]+-\d{5}\.ts$`)
 	subVTTRE     = regexp.MustCompile(`^sub-\d+\.vtt$`) // 共享内嵌字幕提取产物（SubAssetPath 白名单）
+	// videoIDRE 限定视频 ID 必须是 library.makeID 产出的 16 位小写 hex（sha1 前缀），
+	// 在拼接转码根目录前拦截 ".." 等异常段，杜绝 SubAssetPath 越出转码目录。
+	videoIDRE = regexp.MustCompile(`^[0-9a-f]{16}$`)
 )
 
 // AssetPath 校验 HLS 资源名并返回磁盘路径，非法或不存在时返回错误。

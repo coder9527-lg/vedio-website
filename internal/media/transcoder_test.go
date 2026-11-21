@@ -494,7 +494,11 @@ func TestSubAssetPathValidation(t *testing.T) {
 	}
 	defer tc.Close()
 
-	subsDir := filepath.Join(root, "vid1", hlsSubDir)
+	// 合法视频 ID：library.makeID 产出的 16 位小写 hex
+	const vid1 = "0123456789abcdef"
+	const vid2 = "fedcba9876543210"
+
+	subsDir := filepath.Join(root, vid1, hlsSubDir)
 	if err := os.MkdirAll(subsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -502,27 +506,36 @@ func TestSubAssetPathValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := tc.SubAssetPath("vid1", "sub-0.vtt")
+	p, err := tc.SubAssetPath(vid1, "sub-0.vtt")
 	if err != nil {
 		t.Fatalf("合法共享字幕应放行: %v", err)
 	}
-	if !strings.HasSuffix(filepath.ToSlash(p), "vid1/subs/sub-0.vtt") {
+	if !strings.HasSuffix(filepath.ToSlash(p), vid1+"/subs/sub-0.vtt") {
 		t.Fatalf("共享字幕路径异常: %s", p)
 	}
 	for _, bad := range []string{
 		"", "../sub-0.vtt", "sub-0.txt", "sub-.vtt", "subx-0.vtt",
 		"sub-0.VTT", "sub-12.vtt/../../x",
 	} {
-		if _, err := tc.SubAssetPath("vid1", bad); err == nil {
+		if _, err := tc.SubAssetPath(vid1, bad); err == nil {
 			t.Errorf("非法字幕名 %q 应被拒绝", bad)
 		}
 	}
+	// 非法 videoID 段必须在拼路径前拦截（含路径穿越与非 hex 形态）
+	for _, badID := range []string{
+		"..", ".", "vid1", "0123456789ABCDEF", "0123456789abcde",
+		"0123456789abcdef0", "../0123456789abcdef", "0123/6789abcdef",
+	} {
+		if _, err := tc.SubAssetPath(badID, "sub-0.vtt"); err == nil {
+			t.Errorf("非法 videoID %q 应被拒绝", badID)
+		}
+	}
 	// 不存在的文件也应报错
-	if _, err := tc.SubAssetPath("vid1", "sub-9.vtt"); err == nil {
+	if _, err := tc.SubAssetPath(vid1, "sub-9.vtt"); err == nil {
 		t.Error("不存在的字幕应返回错误")
 	}
 	// 其他视频的字幕不可串读
-	if _, err := tc.SubAssetPath("vid2", "sub-0.vtt"); err == nil {
+	if _, err := tc.SubAssetPath(vid2, "sub-0.vtt"); err == nil {
 		t.Error("跨视频读取共享字幕应被拒绝")
 	}
 }
