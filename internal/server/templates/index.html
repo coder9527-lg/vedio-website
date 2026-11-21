@@ -24,13 +24,18 @@
   </header>
 
   <main class="container">
-    <form class="toolbar" method="get" action="/">
-      {{if ne .View "all"}}<input type="hidden" name="view" value="{{.View}}">{{end}}
+    <form class="toolbar" method="get" action="/search">
       <div class="search-box">
-        <input type="search" name="q" value="{{.Query}}" placeholder="搜索文件名或路径…" aria-label="搜索">
+        <input type="search" name="q" value="{{.Query}}" placeholder="搜索片名、演员、导演、文件名…" aria-label="搜索">
         <button type="submit">搜索</button>
-        {{if .Query}}<a class="clear-search" href="/?view={{.View}}">清除</a>{{end}}
+        {{if .Query}}<a class="clear-search" href="/search">清除</a>{{end}}
       </div>
+    </form>
+
+    <form class="toolbar" method="get" action="/">
+      <input type="hidden" name="type" value="{{.Type}}">
+      <input type="hidden" name="view" value="{{.View}}">
+      <input type="hidden" name="genre" value="{{.Genre}}">
       <label class="sort-box">排序
         <select name="sort" onchange="this.form.submit()">
           <option value="" {{if eq .Sort ""}}selected{{end}}>默认（路径）</option>

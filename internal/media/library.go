@@ -156,8 +156,7 @@ func (l *Library) Query(q Query) []*Video {
 		if len(q.IDs) > 0 && !q.IDs[v.ID] {
 			continue
 		}
-		if keyword != "" && !strings.Contains(strings.ToLower(v.Name), keyword) &&
-			!strings.Contains(strings.ToLower(v.RelPath), keyword) {
+		if keyword != "" && !l.videoMatchesKeywordLocked(v, keyword) {
 			continue
 		}
 		if q.Genre != "" && !l.videoHasGenreLocked(v.ID, q.Genre) {
@@ -211,6 +210,40 @@ func (l *Library) videoHasGenreLocked(videoID, genre string) bool {
 	target := strings.ToLower(strings.TrimSpace(genre))
 	for _, g := range md.Genres {
 		if strings.ToLower(strings.TrimSpace(g)) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// videoMatchesKeywordLocked 判断视频是否命中关键字（大小写不敏感）。
+// 匹配范围：文件名、相对路径，以及 NFO/TMDB 元信息中的片名、原名、类型、导演、主演。
+// 调用方须持有读锁；keyword 应由调用方完成 ToLower(TrimSpace)。
+func (l *Library) videoMatchesKeywordLocked(v *Video, keyword string) bool {
+	if strings.Contains(strings.ToLower(v.Name), keyword) ||
+		strings.Contains(strings.ToLower(v.RelPath), keyword) {
+		return true
+	}
+	md := l.metadata[v.ID]
+	if md == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(md.Title), keyword) ||
+		strings.Contains(strings.ToLower(md.Original), keyword) {
+		return true
+	}
+	for _, g := range md.Genres {
+		if strings.Contains(strings.ToLower(g), keyword) {
+			return true
+		}
+	}
+	for _, d := range md.Directors {
+		if strings.Contains(strings.ToLower(d), keyword) {
+			return true
+		}
+	}
+	for _, a := range md.Actors {
+		if strings.Contains(strings.ToLower(a), keyword) {
 			return true
 		}
 	}
