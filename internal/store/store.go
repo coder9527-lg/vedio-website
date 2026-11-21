@@ -44,6 +44,17 @@ type WatchStats struct {
 	FavoriteCount     int64   // 收藏视频数
 }
 
+// WatchEvent 是一次播放会话的历史记录：会话首次上报建一行，同会话后续上报累加。
+type WatchEvent struct {
+	ID           int64     `json:"id"`
+	VideoID      string    `json:"videoId"`
+	StartedAt    time.Time `json:"startedAt"` // 会话开始时间（UTC）
+	UpdatedAt    time.Time `json:"updatedAt"` // 最近一次上报时间（UTC）
+	WatchSeconds float64   `json:"watchSeconds"`
+	Position     float64   `json:"position"`
+	Duration     float64   `json:"duration"`
+}
+
 // Favorite 是一条收藏记录。
 type Favorite struct {
 	VideoID string    `json:"videoId"`
@@ -116,6 +127,16 @@ CREATE TABLE IF NOT EXISTS shares (
 );
 CREATE INDEX IF NOT EXISTS idx_shares_video ON shares(video_id);
 CREATE INDEX IF NOT EXISTS idx_shares_expires ON shares(expires_at);
+CREATE TABLE IF NOT EXISTS watch_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id      TEXT NOT NULL,
+    started_at    TIMESTAMP NOT NULL,
+    updated_at    TIMESTAMP NOT NULL,
+    watch_seconds REAL NOT NULL DEFAULT 0,
+    position      REAL NOT NULL DEFAULT 0,
+    duration      REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_watch_events_started ON watch_events(started_at DESC);
 `)
 	if err != nil {
 		return err
@@ -319,6 +340,75 @@ func (s *Store) WatchStats() (WatchStats, error) {
 // DeleteProgress 删除一条播放进度（如「清除记录」）。
 func (s *Store) DeleteProgress(videoID string) error {
 	_, err := s.db.Exec(`DELETE FROM progress WHERE video_id = ?`, videoID)
+	return err
+}
+
+// ---------- 观看历史（会话级事件） ----------
+
+// StartWatchEvent 开启一次播放会话并写入一行事件，返回事件 ID。
+func (s *Store) StartWatchEvent(videoID string, at time.Time) (int64, error) {
+	if videoID == "" {
+		return 0, fmt.Errorf("videoID 不能为空")
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO watch_events(video_id, started_at, updated_at) VALUES(?, ?, ?)`,
+		videoID, at, at,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateWatchEvent 累加同一会话的观看秒数并刷新位置与更新时间。
+// 事件 ID 不存在（影响 0 行）时不报错，由调用方决定是否补建。
+func (s *Store) UpdateWatchEvent(id int64, watchDelta, position, duration float64, at time.Time) error {
+	if watchDelta < 0 {
+		watchDelta = 0
+	}
+	if position < 0 {
+		position = 0
+	}
+	if duration < 0 {
+		duration = 0
+	}
+	_, err := s.db.Exec(
+		`UPDATE watch_events
+		 SET watch_seconds = watch_seconds + ?, position = ?, duration = ?, updated_at = ?
+		 WHERE id = ?`,
+		watchDelta, position, duration, at, id,
+	)
+	return err
+}
+
+// ListWatchEvents 按会话开始时间倒序返回观看事件，limit <= 0 时默认 100。
+func (s *Store) ListWatchEvents(limit int) ([]WatchEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.Query(
+		`SELECT id, video_id, started_at, updated_at, watch_seconds, position, duration
+		 FROM watch_events ORDER BY started_at DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []WatchEvent
+	for rows.Next() {
+		var e WatchEvent
+		if err := rows.Scan(&e.ID, &e.VideoID, &e.StartedAt, &e.UpdatedAt,
+			&e.WatchSeconds, &e.Position, &e.Duration); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ClearWatchEvents 清空全部观看历史。
+func (s *Store) ClearWatchEvents() error {
+	_, err := s.db.Exec(`DELETE FROM watch_events`)
 	return err
 }
 

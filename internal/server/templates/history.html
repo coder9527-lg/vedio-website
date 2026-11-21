@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="stats-heading">🕘 观看历史</h2>
+
+    {{if not .StoreOn}}
+    <div class="empty">
+      <p>未启用持久化（DB_PATH 未配置），暂无观看历史。</p>
+      <p class="hint">配置数据库路径后，每次播放会话会自动记录并按日期汇总在此。</p>
+    </div>
+    {{else if .Groups}}
+
+    <form method="post" action="/history/clear" class="inline-form"
+          onsubmit="return confirm('确定清空全部观看历史吗？此操作不可恢复。');">
+      <button type="submit" class="btn-secondary">清空全部历史</button>
+    </form>
+
+    {{range .Groups}}
+    <section class="shelf" aria-label="{{.Label}}">
+      <h2 class="shelf-title">{{.Label}}</h2>
+      <div class="shelf-row">
+        {{range .Items}}
+        {{$v := .Video}}
+        <a class="shelf-card" href="/watch/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and .Metadata .Metadata.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+            {{if hasProgress .Progress.Position .Progress.Duration}}
+            <div class="progress-bar" title="已看到 {{formatDuration .Progress.Position}} / {{formatDuration .Progress.Duration}}">
+              <div class="progress-fill" style="width: {{progressPercent .Progress.Position .Progress.Duration}}%"></div>
+            </div>
+            {{end}}
+          </div>
+          <div class="meta">
+            {{if and .Metadata .Metadata.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+            <p class="resume-hint">本次观看 {{formatWatchHours .Event.WatchSeconds}}</p>
+          </div>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{else}}
+    <div class="empty">
+      <p>还没有观看记录。</p>
+      <p class="hint">去<a href="/">视频库</a>看一部电影吧，播放会话会自动出现在这里。</p>
+    </div>
+    {{end}}
+  </main>
+</body>
+</html>

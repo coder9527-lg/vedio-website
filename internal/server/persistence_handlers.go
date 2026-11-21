@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/coder9527-lg/vedio-website/internal/store"
 )
@@ -70,7 +71,34 @@ func (s *Server) handleProgressPut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "保存进度失败"})
 		return
 	}
+	s.recordWatchEvent(id, req)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// recordWatchEvent 把本次上报累加到观看历史。进度是核心数据，历史是附属，
+// 因此任何失败只记日志、不影响上报响应。
+func (s *Server) recordWatchEvent(videoID string, req progressRequest) {
+	now := time.Now().UTC()
+	s.watchSessionMu.Lock()
+	eventID, ok := s.watchSession[videoID]
+	s.watchSessionMu.Unlock()
+
+	// 会话首次上报，或服务重启后内存索引丢失：补建一行事件
+	if req.SessionStart || !ok {
+		id, err := s.store.StartWatchEvent(videoID, now)
+		if err != nil {
+			log.Printf("创建观看历史事件失败: %v", err)
+			return
+		}
+		s.watchSessionMu.Lock()
+		s.watchSession[videoID] = id
+		s.watchSessionMu.Unlock()
+		eventID = id
+	}
+
+	if err := s.store.UpdateWatchEvent(eventID, req.WatchDelta, req.Position, req.Duration, now); err != nil {
+		log.Printf("更新观看历史事件失败: %v", err)
+	}
 }
 
 // handleProgressGet 查询单个视频的播放进度。
