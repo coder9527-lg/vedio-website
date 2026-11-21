@@ -232,7 +232,7 @@ func TestRescanPrunesOrphanRecords(t *testing.T) {
 	// 给真实视频和一个"已删除"的假 ID 都写进度
 	doJSON(t, ts, http.MethodPut, "/api/v1/videos/"+id+"/progress",
 		map[string]float64{"position": 10, "duration": 100})
-	if err := srv.store.SaveProgress("ghost", 5, 50); err != nil {
+	if err := srv.store.SaveProgress("ghost", store.ProgressUpdate{Position: 5, Duration: 50}); err != nil {
 		t.Fatalf("写入孤儿进度失败: %v", err)
 	}
 	if err := srv.store.SetFavorite("ghost", true); err != nil {
@@ -306,10 +306,10 @@ func TestHomeShelfRows(t *testing.T) {
 	}
 
 	// 有效进度（100s/600s）写到 b-movie；片头抖动（2s）写到 c-show，应被过滤
-	if err := srv.store.SaveProgress(idByName["b-movie"], 100, 600); err != nil {
+	if err := srv.store.SaveProgress(idByName["b-movie"], store.ProgressUpdate{Position: 100, Duration: 600}); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.store.SaveProgress(idByName["c-show"], 2, 600); err != nil {
+	if err := srv.store.SaveProgress(idByName["c-show"], store.ProgressUpdate{Position: 2, Duration: 600}); err != nil {
 		t.Fatal(err)
 	}
 
