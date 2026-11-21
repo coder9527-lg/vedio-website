@@ -9,7 +9,8 @@
 - ⏯️ **在线播放 + 进度条拖拽**：基于 HTTP Range 的流式传输，浏览器原生播放器；支持 0.5~2 倍倍速切换、键盘快捷键（空格/K 播放暂停、←→±5 秒、↑↓音量、F 全屏、M 静音）与字幕字号三档调节
 - 🩺 **健康检查端点**：`/healthz` 固定返回 200（认证放行），Dockerfile 内置 `HEALTHCHECK`，群晖 Container Manager / 主流 NAS 容器管理可直接探活
 - 🖼️ **ffmpeg 缩略图**：首次访问按需抽帧并缓存，不阻塞扫描；无 ffmpeg 时自动降级占位图
-- 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频，点击「转码播放」即用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖；可选 Intel 核显 VAAPI 硬解硬编（`TRANSCODE_HWACCEL=vaapi`），设备缺失时启动期自动回退 CPU 软转
+- 🔄 **HLS 在线转码（按需）**：MKV/HEVC/FLV 等浏览器无法直解的视频自动用 ffmpeg 实时转 H.264/AAC 的 HLS 流，边转边播；播放页「清晰度」菜单提供原画直链与 1080p/720p/480p 三档转码（原画不转码、缩放不放大源，浏览器不能直解时默认 720p）；并发上限、排队、空闲自动停止与断点重转，hls.js 内嵌无外部 CDN 依赖；可选 Intel 核显 VAAPI 硬解硬编（`TRANSCODE_HWACCEL=vaapi`），设备缺失时启动期自动回退 CPU 软转
+- 🔗 **文件下载分享**：播放页可为视频生成带随机 token 的分享链接，支持有效期（小时）与可选访问口令（bcrypt 哈希），访客免登录即可在分享页预览/下载原文件；过期链接由后台定时清理，可随时吊销（需开启 `DB_PATH`）
 - 🔊 **多音轨支持**：ffprobe 自动探测视频中的多路音轨（语言/标题），转码时产出带 `EXT-X-MEDIA` 音频分组的 master 播放列表，播放页可在音轨菜单中切换；单音轨视频保持简单布局不变
 - 💬 **外挂字幕自动挂载**：同目录或 `subs/`/`subtitles/`/`字幕/` 子目录中同名（可带语言/SDH/强制后缀，如 `Movie.zh-CN.srt`、`Movie.en.forced.ass`）的 SRT/WebVTT/ASS/SSA 字幕自动关联，服务端纯 Go 统一转 WebVTT（无需额外进程/磁盘缓存），通过 `<track>` 在原画与转码两种模式下均可切换
 - 📝 **内嵌字幕提取**：转码时自动把视频内封装的文本字幕（SRT/ASS/WebVTT/MOV_TEXT）提取为 WebVTT 并挂进同一个字幕菜单（标注「[内嵌]」）；位图字幕（PGS/DVD-VOBSUB/DVB/XSUB）在安装 tesseract 后经 OCR 识别为 WebVTT，未安装时仅识别不提取、静默降级
@@ -31,9 +32,9 @@ vedio-website/
 ├── internal/
 │   ├── auth/              # 访问密码：HMAC 签名 Cookie、登录限流
 │   ├── config/            # 环境变量配置
-│   ├── media/             # 媒体库扫描、查询排序、季集解析与剧集聚合、ffmpeg 缩略图、HLS 按需转码
+│   ├── media/             # 媒体库扫描、查询排序、季集解析与剧集聚合、ffmpeg 缩略图、HLS 按需转码（清晰度档位）
 │   ├── server/            # HTTP 路由、API、页面模板与静态资源（embed 内嵌）
-│   └── store/             # SQLite 持久化：播放进度、收藏（modernc 纯 Go 驱动）
+│   └── store/             # SQLite 持久化：播放进度、收藏、播放列表、分享链接（modernc 纯 Go 驱动）
 ├── docker/
 │   └── entrypoint.sh      # PUID/PGID 权限处理
 ├── Dockerfile
@@ -86,7 +87,8 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | `TRANSCODE_VAAPI_DEVICE` | `/dev/dri/renderD128` | VAAPI 渲染节点路径；启用硬转时还需在 compose 中映射 `/dev/dri` 并把容器用户加入 `render` 组 |
 | `OCR_ENABLED` | `true` | 是否启用位图字幕 OCR；设为 `false` 关闭，或 tesseract 缺失/无语言包时自动降级（位图字幕仅识别不提取） |
 | `TESSERACT_BIN` | `tesseract` | tesseract OCR 可执行文件路径；需另行安装 tesseract 及所需语言包（如 `chi_sim`、`eng`） |
-| `DB_PATH` | 空（关闭） | SQLite 数据库文件路径（如 `/data/vedio.db`），开启播放进度与收藏；留空禁用持久化，接口返回 503 且页面隐藏相关入口 |
+| `DB_PATH` | 空（关闭） | SQLite 数据库文件路径（如 `/data/vedio.db`），开启播放进度、收藏、播放列表与文件分享；留空禁用持久化，相关接口返回 503 且页面隐藏入口 |
+| `SHARE_CLEANUP_INTERVAL` | `1h` | 过期分享链接的后台清理间隔；过期链接在被访问时也会懒清理（410），设为 `0` 关闭定时清理 |
 | `PUID` / `PGID` | `0` / `0` | 容器内运行用户 UID/GID（NAS 权限适配） |
 | `TZ` | `Asia/Shanghai` | 时区 |
 | `WATCH_ENABLED` | `true` | 是否启用 fsnotify 文件监听自动增量扫描，设为 `false` 关闭 |
@@ -106,7 +108,7 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/` | 视频库首页（支持 `q`、`sort`、`view`、`type=all/movie/show` 筛选） |
+| GET | `/` | 视频库首页（支持 `q`、`sort`、`view`、`type=all/movie/show`、`genre=类型名` 筛选，参数可正交组合） |
 | GET | `/watch/{id}` | 视频播放页（剧集成员自动注入下一集连播信息） |
 | GET | `/shows/{id}` | 剧集详情页（按季列出全部集） |
 | GET | `/api/v1/shows` | 剧集列表 JSON |
@@ -122,9 +124,10 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | POST | `/api/v1/scrape/bulk` | 启动全库批量刮削（仅缺失元信息的视频）：202 已受理、409 已有任务运行（回传进度）、503 刮削未启用 |
 | GET | `/api/v1/scrape/bulk` | 批量刮削进度快照（总数/成功/跳过/失败/当前视频/起止时间） |
 | GET | `/artwork/{id}/poster` · `/artwork/{id}/backdrop` | 本地海报 / 背景图（仅限媒体根目录内的图片，白名单扩展名） |
-| GET | `/api/v1/videos/{id}/transcode` | 启动/查询 HLS 转码会话状态（排队返回 429，前端轮询） |
-| GET | `/hls/{id}/index.m3u8` | HLS 入口播放列表（单音轨返回 index，多音轨返回 master 内容，`no-store`） |
-| GET | `/hls/{id}/{asset...}` | HLS 媒体播放列表与 mpegts 分片（变体 `out-*`，文件名白名单校验，防路径穿越） |
+| GET | `/api/v1/videos/{id}/transcode?q={1080p\|720p\|480p}` | 启动/查询指定档位 HLS 转码会话（非法 `q` 归一化为 720p；排队返回 429，前端轮询） |
+| GET | `/hls/{id}/{quality}/index.m3u8` | 档位入口播放列表（单音轨返回 index，多音轨返回 master 内容，`no-store`） |
+| GET | `/hls/{id}/{quality}/{asset...}` | 档位媒体播放列表与 mpegts 分片（变体 `out-*`，文件名白名单校验，防路径穿越） |
+| GET | `/hls/{id}/subs/{name}` | 视频级共享内嵌字幕 `sub-N.vtt`（跨档位只提取一次，白名单校验） |
 | GET | `/api/v1/videos/{id}/subtitles` | 视频关联的外挂字幕列表 |
 | GET | `/subtitles/{id}/{sid}/track.vtt` | 单条字幕，统一转 WebVTT（SRT/ASS/SSA 服务端转换） |
 | GET / PUT / DELETE | `/api/v1/videos/{id}/progress` | 查询 / 上报 / 清除播放进度（需 `DB_PATH`） |
@@ -137,6 +140,12 @@ MEDIA_DIR=/path/to/videos THUMB_DIR=./data/thumbs go run ./cmd/server
 | POST | `/api/v1/playlists/{id}/items/{videoId}/move` | 上移/下移，请求体 `{"direction":"up"\|"down"}`，返回全序 |
 | POST | `/api/v1/shows/{id}/playlist` | 整剧按季集顺序一键加入，请求体 `{"playlistId":"..."}`，自动去重 |
 | GET | `/api/v1/videos/{id}/playlists` | 该视频所属的播放列表（加入弹窗勾选态） |
+| POST | `/api/v1/videos/{id}/shares` | 创建分享链接，请求体 `{"hours":24\|168\|720,"passcode":"可选"}`（需 `DB_PATH`） |
+| GET | `/api/v1/videos/{id}/shares` | 该视频的有效分享列表（需 `DB_PATH`） |
+| DELETE | `/api/v1/shares/{token}` | 吊销分享（幂等，不存在返回 404） |
+| GET | `/share/{token}` | 匿名分享落地页（过期 410、视频已删 404，公开链路无需登录） |
+| POST | `/share/{token}/verify` | 校验访问口令（成功 302 并下发签名 Cookie，错码 403） |
+| GET | `/share/{token}/download` | 访客下载/预览原文件（支持 `?code=` 口令、Range，过期 410） |
 | GET / POST | `/login` | 登录页 / 提交密码（开启认证后） |
 | POST | `/logout` | 退出登录并清除会话 |
 | GET | `/healthz` | 健康检查，固定返回 `{"status":"ok"}`（无需登录，供容器探活/负载均衡） |
@@ -172,19 +181,24 @@ environment:
 - 采用 **纯 Go 驱动 `modernc.org/sqlite`**，CGO 关闭即可静态编译，交叉编译与 NAS 容器部署无负担；
 - 播放页每 5 秒、暂停、切后台、关闭页面时自动上报进度，重新打开自动断点续播（看完 95% 以上视为看完，从头播放）；
 - 首页提供「全部 / 继续观看 / ⭐ 收藏 / 📂 播放列表」视图，卡片展示播放进度条与续播提示；
+- 首页另有「继续观看」「最近加入」两条横向片架（纯服务端渲染），并提供类型 chips（按 NFO/TMDB 类型标签筛选），与搜索、排序、电影/剧集视图等 URL 查询参数正交组合；
 - 数据库以 WAL 模式运行，重扫后自动清理指向已删除视频的孤儿记录（播放列表表头保留，仅清悬空条目）；
 - 不配置 `DB_PATH` 时功能整体降级：相关 API 返回 `503`，页面自动隐藏收藏、播放列表按钮与视图 tab，其余功能不受影响。
 
 ## HLS 在线转码（可选）
 
-浏览器通常只能直解 MP4(H.264/AAC) 与 WebM，MKV、HEVC、FLV、AVI 等格式会黑屏或只有声音。开启转码后，播放页提供「原画直链 / 转码播放」两种模式：
+浏览器通常只能直解 MP4(H.264/AAC) 与 WebM，MKV、HEVC、FLV、AVI 等格式会黑屏或只有声音。开启转码后，播放页「清晰度」菜单提供**原画直链与 1080p / 720p / 480p 三档转码**：
 
-- **按需启动、边转边播**：首次点击转码播放才拉起 ffmpeg，输出 HLS（`event` 语义播放列表实时增长，完成后补 `EXT-X-ENDLIST`），前端用内嵌的 hls.js（Safari 走原生 HLS）轮询状态并自动接管播放；
-- **并发与排队**：`TRANSCODE_MAX` 限制同时运行的转码进程数，槽位满时新任务入队，API 立即返回 `429`，前端显示「排队中」并继续轮询，不会重复入队；
-- **空闲回收与重转**：播放列表/分片/状态请求都会刷新会话的最近访问时间，超过 `TRANSCODE_IDLE_TIMEOUT` 无人观看即停止 ffmpeg 释放 CPU，已产出分片保留；再次观看时清空旧目录全量重转，分片从 0 重新编号，避免新旧列表混用；
-- **安全与缓存**：分片名严格白名单（`seg-<5 位数字>.ts`），杜绝路径穿越与日志读取；m3u8 禁缓存（动态内容），分片长缓存（内容不变）；
+- **原画不转码**：默认入口，直接走 `/stream/{id}` 直链，零 CPU 开销；浏览器无法直解当前格式时自动选择 720p 转码播放；
+- **清晰度档位**：三档分别对应目标高度 1080/720/480（软转 CRF 20/23/26，VAAPI 码率 5000k/2800k/1400k，音频统一 AAC 128k）。缩放遵循「不放大源」——源高度低于档高时保持原分辨率，宽度按比例自动取偶数；非法档位参数由后端归一化为 720p；
+- **按需启动、边转边播**：选择档位才拉起 ffmpeg，输出 HLS（`event` 语义播放列表实时增长，完成后补 `EXT-X-ENDLIST`），前端用内嵌的 hls.js（Safari 走原生 HLS）轮询状态并自动接管播放；切档时销毁旧实例并按新 URL 重新挂载，同档转码失败先自动重试一次、再失败回退原画；
+- **会话与产物按档位隔离**：会话键为 `视频ID:档位`，产物目录 `TRANSCODE_DIR/<视频ID>/<档位>/`，不同档位互不干扰、可同时缓存；
+- **并发与排队**：`TRANSCODE_MAX` 限制同时运行的转码进程数（跨档位合计），槽位满时新任务入队，API 立即返回 `429`，前端显示「排队中」并继续轮询，不会重复入队；
+- **空闲回收与重转**：播放列表/分片/状态请求都会刷新会话的最近访问时间，超过 `TRANSCODE_IDLE_TIMEOUT` 无人观看即停止 ffmpeg 释放 CPU，已产出分片保留；再次观看时清空该档位旧目录全量重转，分片从 0 重新编号，避免新旧列表混用；
+- **安全与缓存**：分片名严格白名单（`seg-<5 位数字>.ts` 与多音轨变体名），杜绝路径穿越与日志读取；m3u8 禁缓存（动态内容），分片长缓存（内容不变）；
 - **多音轨切换**：转码前用 ffprobe 列出全部音频流（语言标签、容器标题、default 标记）。单路音频沿用 `index.m3u8 + seg-*.ts` 简单布局；两路及以上产出 `master.m3u8` + 视频变体 `out-0.*` 与每路音频变体 `out-aN.*`（视频流只编码一份以省 CPU），master 中的 `NAME` 由服务端重写为友好音轨名（ffmpeg 6.x 默认写 `audio_N`）。前端 hls.js 走 `audioTrack` 切换，Safari 原生 HLS 走 `audioTracks`
-- **降级策略**：未安装 ffmpeg 或 `TRANSCODE_ENABLED=false` 时播放页自动隐藏转码入口，原画直链、下载等其他功能不受影响；ffprobe 缺失或探测失败时自动退回单音轨转码；转码失败可随时切回原画或下载原文件。
+- **共享内嵌字幕**：字幕提取产物为视频级（`TRANSCODE_DIR/<视频ID>/subs/sub-N.vtt`），三个档位共用、每视频只提取一次，切档不重复 OCR；经 `/hls/{id}/subs/{name}` 提供，文件名白名单与档位产物相同级别的路径穿越防护；
+- **降级策略**：未安装 ffmpeg 或 `TRANSCODE_ENABLED=false` 时播放页自动隐藏清晰度菜单，原画直链、下载等其他功能不受影响；ffprobe 缺失或探测失败时自动退回单音轨转码；转码失败可随时切回原画或下载原文件。
 
 ## 外挂字幕
 
@@ -207,7 +221,7 @@ Movies/subs/Movie.fr.srt      # 也可放在 subs/subtitles/字幕 子目录（J
 - 语言标签覆盖中英日韩法德西俄意葡泰越阿印等常见代码（含 `zh-CN/zh-Hant/chs/cht` 等别名），未识别的后缀原样展示、不丢弃；
 - 字幕经标准 `<track>` 挂载，**原画直链与 HLS 转码两种播放模式通用**，播放页「字幕」菜单可开关；中文/`default` 字幕默认开启；
 - 文件监听覆盖字幕增删：拷贝进来或删除字幕文件后（防抖窗口结束）自动刷新关联，无需重扫；
-- **内嵌字幕**：视频内封装的文本字幕（subrip/ASS/WebVTT/MOV_TEXT 等）在转码启动时由 ffmpeg 逐路提取为转码目录下的 `sub-N.vtt`（自动把 `MM:SS.mmm` 规整为标准 `HH:MM:SS.mmm`），与外挂字幕共用播放页「字幕」菜单，名称带「[内嵌]」前缀。
+- **内嵌字幕**：视频内封装的文本字幕（subrip/ASS/WebVTT/MOV_TEXT 等）在转码启动时由 ffmpeg 逐路提取为视频级共享目录下的 `subs/sub-N.vtt`（自动把 `MM:SS.mmm` 规整为标准 `HH:MM:SS.mmm`），三个清晰度档位共用、只提取一次，与外挂字幕共用播放页「字幕」菜单，名称带「[内嵌]」前缀。
 - **位图字幕 OCR（可选）**：PGS/DVD-VOBSUB/DVB/XSUB 等位图字幕只有图像、没有文本，需要额外安装 [tesseract OCR](https://github.com/tesseract-ocr/tesseract) 及语言包（简体中文 `chi_sim`、英文 `eng` 等，Debian 系为 `tesseract-ocr` 与 `tesseract-ocr-chi-sim`，macOS 为 `brew install tesseract tesseract-lang`）。启用后转码时先用 ffmpeg 把位图字幕解码为带时间戳的 PNG 帧，再由 tesseract 逐帧识别，相邻重复帧自动合并为同一条 WebVTT cue，产出同样的 `sub-N.vtt` 并入字幕菜单；语言按字幕轨标签自动选择（中文优先 `chi_sim`/`chi_tra`，缺语言包回退英文）。未安装 tesseract、缺少语言包或设 `OCR_ENABLED=false` 时静默降级为「仅识别不提取」，转码主流程仍以 `-sn` 丢弃图像流，不影响其他功能。为保持镜像精简，默认镜像不含 tesseract；容器内需要时可基于本镜像自行 `apk add --no-cache tesseract-ocr tesseract-ocr-data-chi_sim`（语言包名随 Alpine 版本略有差异）。
 
 ### VAAPI 硬件加速（可选，Intel 核显）
@@ -291,11 +305,20 @@ group_add:
 - **列表连播**：从列表进入播放页时 URL 带 `?playlist={id}` 并在跳转中贯穿；本集结束后优先按列表顺序连播（自动跳过已删除的悬空视频），列表末项停止，不回退到剧集连播；参数非法或列表已删时静默回退原有剧集连播，旧链接不会 404。
 - **数据与清理**：两张新表 `playlists`、`playlist_item`（复合主键天然去重），无外键；重扫只清理悬空条目、保留空列表表头；删除列表在事务内级联清空条目。
 
+## 文件下载分享（可选，需 `DB_PATH`）
+
+把单个视频以匿名链接分享给站外用户，对方无需登录即可在线预览或下载原文件：
+
+- **创建与吊销**：播放页「🔗 创建分享链接」弹窗选择有效期（1 / 7 / 30 天白名单，拒绝任意透传）并可选填访问口令；管理端可查看该视频的全部有效分享并随时吊销，重复吊销返回 404。
+- **随机 token 与口令存储**：token 使用加密随机数生成、不可枚举；口令以 bcrypt 哈希落库，明文不入库、不回显，接口仅返回 `hasPasscode` 布尔态。
+- **公开链路**：`/share/{token}` 为无需登录的落地页（在认证中间件白名单内）；有口令时先经 `/verify` 校验，成功后下发 HMAC 签名 Cookie，也支持 `?code=` 单次 URL 带码；下载走 `/share/{token}/download`，支持 Range 在线播放。
+- **过期处理**：过期分享访问即返回 410 并懒清理；后台另有 `SHARE_CLEANUP_INTERVAL`（默认 1h）定时批量清理；源视频被删除的分享返回 404。
+
 ## 设计说明
 
-- **存储可选、默认无数据库**：视频索引保存在内存中，启动时全量扫描，运行期由 fsnotify 监听增量维护（可选定时全量兜底）；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。只有显式设置 `DB_PATH` 才启用 SQLite，用于播放进度、收藏与播放列表。
+- **存储可选、默认无数据库**：视频索引保存在内存中，启动时全量扫描，运行期由 fsnotify 监听增量维护（可选定时全量兜底）；ID 由相对路径的 SHA-1 派生，重扫后稳定不变。只有显式设置 `DB_PATH` 才启用 SQLite，用于播放进度、收藏、播放列表与分享链接。
 - **静态资源内嵌**：模板与 CSS 通过 `go:embed` 编译进二进制，镜像里只有一个可执行文件 + ffmpeg。
-- **浏览器兼容**：MP4/WebM 可直接播放；MKV 等容器取决于浏览器解码能力，不支持时可下载原文件或在后续版本接入服务端转码（HLS）。
+- **浏览器兼容**：MP4/WebM 可直接播放；MKV/HEVC/FLV 等容器取决于浏览器解码能力，不支持时可在播放页选择 720p/480p/1080p 转码（HLS），或下载原文件。
 
 ## 路线图（Roadmap）
 
@@ -311,5 +334,8 @@ group_add:
 - [x] 在线刮削（TMDB v3，纯标准库实现，候选人工确认，与 NFO 合并并持久化，见「在线刮削（TMDB）」）
 - [x] 全库批量刮削（内存单任务、300ms 节流、进度轮询，见「批量刮削」）
 - [x] VAAPI 硬件加速转码（Intel 核显，设备缺失自动回退软转，见「VAAPI 硬件加速」）
+- [x] 转码清晰度档位（原画直链 + 1080p/720p/480p，按 `视频:档位` 独立会话与目录，不放大源，见「HLS 在线转码」）
+- [x] 文件下载分享（随机 token、有效期白名单、可选提取码、匿名公开链路、过期懒清理与定时清理，见「文件下载分享」）
+- [x] 首页「继续观看 / 最近加入」横向片架与类型（genre）筛选 chips（纯服务端渲染，URL 参数正交）
 - [x] 播放器增强（倍速、键盘快捷键、字幕字号）与 `/healthz` 容器健康检查
 - [x] 电视剧/剧集分组（SxxEyy/1xx/中文季集/EP 命名解析、首页折叠、详情页按季列集、播放页自动连播，见「电视剧/剧集分组」）

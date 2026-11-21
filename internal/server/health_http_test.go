@@ -41,6 +41,8 @@ func TestIsPublicPath(t *testing.T) {
 		"/static/css/style.css":  true,
 		"/favicon.ico":           true,
 		"/thumb-placeholder.svg": true,
+		"/share/abc123":          true,
+		"/share/abc123/download": true,
 		"/":                      false,
 		"/api/v1/videos":         false,
 		"/watch/abc":             false,

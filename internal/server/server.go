@@ -63,6 +63,7 @@ func isPublicPath(path string) bool {
 		return true
 	}
 	return strings.HasPrefix(path, "/static/") ||
+		strings.HasPrefix(path, "/share/") ||
 		path == "/thumb-placeholder.svg" ||
 		path == "/favicon.ico"
 }
@@ -143,10 +144,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)
 
-	// HLS 在线转码（可选）：状态轮询、m3u8 播放列表（单音轨 index / 多音轨 master）、分片与变体
+	// 匿名文件分享（公开链路，isPublicPath 已放行 /share/ 前缀）：落地页、提取码校验、下载
+	mux.HandleFunc("GET /share/{token}", s.handleSharePage)
+	mux.HandleFunc("POST /share/{token}/verify", s.handleShareVerify)
+	mux.HandleFunc("GET /share/{token}/download", s.handleShareDownload)
+
+	// 分享管理（受访问密码与 requireStore 保护）：创建、列表、撤销
+	mux.HandleFunc("POST /api/v1/videos/{id}/shares", s.handleShareCreate)
+	mux.HandleFunc("GET /api/v1/videos/{id}/shares", s.handleShareList)
+	mux.HandleFunc("DELETE /api/v1/shares/{token}", s.handleShareDelete)
+
+	// HLS 在线转码（可选）：状态轮询（?q= 清晰度）、按档位的 m3u8/分片、视频级共享内嵌字幕。
+	// ServeMux 通配段不允许与字面段（subs）同级共存，故用 {rest...} 收敛后在 handler 内分发。
 	mux.HandleFunc("GET /api/v1/videos/{id}/transcode", s.handleTranscodeStatus)
-	mux.HandleFunc("GET /hls/{id}/index.m3u8", s.handleHLSPlaylist)
-	mux.HandleFunc("GET /hls/{id}/{asset...}", s.handleHLSAsset)
+	mux.HandleFunc("GET /hls/{id}/{rest...}", s.handleHLS)
 
 	// 外挂字幕：列表与 WebVTT 轨道（原画/HLS 两种模式通用）
 	mux.HandleFunc("GET /api/v1/videos/{id}/subtitles", s.handleSubtitleList)

@@ -51,7 +51,45 @@ const (
 
 	// 内嵌字幕提取产物的统一前缀：sub-<序号>.vtt，受 AssetPath 白名单保护。
 	hlsSubPrefix = "sub-"
+
+	// 共享内嵌字幕的目录名（视频级，各清晰度档位共用，避免重复提取/OCR）。
+	hlsSubDir = "subs"
 )
+
+// 清晰度档位标识（同时作为会话复合键与产物目录名的一部分）。
+const (
+	Quality1080p = "1080p"
+	Quality720p  = "720p"
+	Quality480p  = "480p"
+)
+
+// QualitySpec 描述一个清晰度档位的编码参数。
+//   - Height：目标高度（像素），宽度按比例自动取偶数；源高度不足时不放大；
+//   - CRF：软转 libx264 质量参数（越小越清晰）；
+//   - VideoBitrate：VAAPI 硬转目标码率（硬编不支持 CRF）。
+type QualitySpec struct {
+	Height       int
+	CRF          int
+	VideoBitrate string
+}
+
+// qualitySpecs 是三档清晰度的参数表，键为档位常量。
+var qualitySpecs = map[string]QualitySpec{
+	Quality1080p: {Height: 1080, CRF: 20, VideoBitrate: "5000k"},
+	Quality720p:  {Height: 720, CRF: 23, VideoBitrate: "2800k"},
+	Quality480p:  {Height: 480, CRF: 26, VideoBitrate: "1400k"},
+}
+
+// NormalizeQuality 校验清晰度档位，非法值（含空串）回退默认 720p。
+func NormalizeQuality(q string) string {
+	if _, ok := qualitySpecs[q]; ok {
+		return q
+	}
+	return Quality720p
+}
+
+// sessionKey 生成会话复合键：同一视频的不同档位各自独立转码与缓存。
+func sessionKey(videoID, quality string) string { return videoID + ":" + quality }
 
 // subtitleExtractTimeout 限制单条内嵌字幕的提取时长，避免异常文件拖住转码启动。
 const subtitleExtractTimeout = 60 * time.Second
@@ -91,7 +129,8 @@ type Transcoder struct {
 	sem      chan struct{} // 并发转码任务信号量
 	mu       sync.Mutex
 	sessions map[string]*session
-	wg       sync.WaitGroup // 等待全部 ffmpeg 进程退出
+	subOnce  map[string]*sync.Once // 每个视频的内嵌字幕只提取一次（视频级共享，跨档位复用）
+	wg       sync.WaitGroup        // 等待全部 ffmpeg 进程退出
 }
 
 // SetOCRer 注入位图字幕 OCR 器。未注入或 OCR 不可用时，位图字幕轨保持
@@ -153,6 +192,7 @@ func NewTranscoder(dir, ffmpeg, ffprobe string, maxConcurrent int, idleTimeout t
 		cancel:        cancel,
 		sem:           make(chan struct{}, maxConcurrent),
 		sessions:      map[string]*session{},
+		subOnce:       map[string]*sync.Once{},
 	}
 	go t.reapLoop()
 	return t, nil
@@ -177,24 +217,27 @@ type sessionStatus struct {
 	EmbeddedSubs []SubtitleTrack `json:"embeddedSubtitles,omitempty"` // 内嵌字幕轨（含位图轨）
 }
 
-// Ensure 返回（必要时启动）视频对应的转码会话。
+// Ensure 返回（必要时启动）视频在指定清晰度档位下的转码会话。
+// quality 非法时回退默认 720p；同一视频的不同档位拥有独立会话与产物目录。
 // 槽位已满且这是新排队任务时立即返回 ErrTranscoderBusy（会话已入队，前端轮询即可）；
 // 会话已在 starting/running/done 时直接返回会话与当前状态。
-func (t *Transcoder) Ensure(v *Video) (*session, error) {
+func (t *Transcoder) Ensure(v *Video, quality string) (*session, error) {
 	if !t.Available() {
 		return nil, ErrTranscoderDisabled
 	}
+	quality = NormalizeQuality(quality)
+	key := sessionKey(v.ID, quality)
 
 	t.mu.Lock()
-	sess, ok := t.sessions[v.ID]
+	sess, ok := t.sessions[key]
 	if ok && sess.getState() == stateFailed {
 		// 失败会话丢弃，下一轮以全新状态重试
-		delete(t.sessions, v.ID)
+		delete(t.sessions, key)
 		ok = false
 	}
 	if !ok {
-		sess = newSession(v, filepath.Join(t.dir, v.ID))
-		t.sessions[v.ID] = sess
+		sess = newSession(v, filepath.Join(t.dir, v.ID, quality), quality)
+		t.sessions[key] = sess
 	}
 	t.mu.Unlock()
 
@@ -240,8 +283,8 @@ func (t *Transcoder) Ensure(v *Video) (*session, error) {
 	}
 	if sess.getState() == stateFailed {
 		t.mu.Lock()
-		if cur := t.sessions[v.ID]; cur == sess {
-			delete(t.sessions, v.ID)
+		if cur := t.sessions[key]; cur == sess {
+			delete(t.sessions, key)
 		}
 		t.mu.Unlock()
 		return nil, ErrSessionFailed
@@ -267,13 +310,22 @@ func (t *Transcoder) run(sess *session) {
 
 	// 探测内嵌字幕：文本轨在主转码前同步提取为 WebVTT sidecar（sub-N.vtt），
 	// 位图轨（PGS/DVD 等）仅记录、不提取。失败不阻断主转码。
+	// 字幕产物为视频级共享（<dir>/<videoID>/subs/），各清晰度档位只提取一次，
+	// 避免切档时重复转码/OCR。
 	subTracks, subErr := ProbeSubtitles(t.ffprobe, sess.video.AbsPath())
 	if subErr != nil {
 		log.Printf("ffprobe 探测字幕失败 %s，跳过内嵌字幕: %v", sess.video.RelPath, subErr)
 	}
 	sess.setSubtitleTracks(subTracks)
 	if len(subTracks) > 0 {
-		t.extractSubtitles(sess, subTracks)
+		t.mu.Lock()
+		once, ok := t.subOnce[sess.video.ID]
+		if !ok {
+			once = &sync.Once{}
+			t.subOnce[sess.video.ID] = once
+		}
+		t.mu.Unlock()
+		once.Do(func() { t.extractSubtitles(sess, subTracks) })
 	}
 
 	ctx, cancel := context.WithCancel(t.ctx)
@@ -321,24 +373,29 @@ func (t *Transcoder) run(sess *session) {
 // encodeProfile 描述一次转码的编码档位，使参数拼装成为不依赖实例的纯函数，
 // 便于在无 ffmpeg/无 GPU 的环境下单测软转与硬转两套参数。
 type encodeProfile struct {
-	hwaccel     string // 硬件加速模式：空=软转，"vaapi"=VAAPI
-	vaapiDevice string // VAAPI 渲染节点路径
+	hwaccel     string      // 硬件加速模式：空=软转，"vaapi"=VAAPI
+	vaapiDevice string      // VAAPI 渲染节点路径
+	quality     QualitySpec // 清晰度档位（目标高度、CRF、硬转码率）
 }
 
 // buildFFmpegArgs 根据输入视频、输出目录、探测到的音轨与编码档位生成 ffmpeg 参数。
 //   - 0~1 路音频：简单布局，单个 index.m3u8 + seg-xxxxx.ts（保持旧行为与测试不变）；
 //   - 2 路及以上：变体布局，master.m3u8 为入口，视频与每路音频各自一个媒体播放列表，
 //     前端通过 EXT-X-MEDIA 音频分组切换音轨，视频流只编码一份以节省 CPU。
+//
+// 缩放遵循「不放大源」原则：目标高度取 min(源高, 档高)，宽度 -2 自动保持比例与偶数像素。
 func buildFFmpegArgs(videoPath, outDir string, tracks []AudioTrack, p encodeProfile) []string {
+	h := p.quality.Height
 	// 编解码与 HLS 公共选项（不含输入与 -map，二者随音轨数变化）。
 	var opts []string
 	if p.hwaccel == "vaapi" {
 		// VAAPI 硬解硬编：输入前初始化硬件设备，输出帧保持 VAAPI 表面格式，
 		// scale_vaapi 同时完成缩放与像素格式转换（nv12 为 h264_vaapi 通用输入格式）。
+		// 逗号需转义以与滤镜链分隔符区分；min(ih\,h) 保证不向上放大。
 		opts = []string{
 			"-c:v", "h264_vaapi",
-			"-b:v", "4000k", // VAAPI 不支持 crf/preset，使用目标码率控制
-			"-vf", "scale_vaapi=format=nv12",
+			"-b:v", p.quality.VideoBitrate, // VAAPI 不支持 crf/preset，使用目标码率控制
+			"-vf", fmt.Sprintf("scale_vaapi=w=-2:h=min(ih\\,%d):format=nv12", h),
 			"-c:a", "aac", "-b:a", "128k",
 			"-ac", "2",
 			"-sn", // 丢弃内嵌字幕轨：外挂字幕通过 <track> 提供，位图字幕无法转 WebVTT
@@ -351,8 +408,9 @@ func buildFFmpegArgs(videoPath, outDir string, tracks []AudioTrack, p encodeProf
 		opts = []string{
 			"-c:v", "libx264",
 			"-preset", "veryfast",
-			"-crf", "23",
-			"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // H.264 要求偶数像素
+			"-crf", strconv.Itoa(p.quality.CRF),
+			// -2 让宽度按比例自动取偶数；min(ih\,h) 保证源高度不足时不放大
+			"-vf", fmt.Sprintf("scale=-2:min(ih\\,%d)", h),
 			"-c:a", "aac", "-b:a", "128k",
 			"-ac", "2",
 			"-sn",
@@ -415,10 +473,14 @@ func buildFFmpegArgs(videoPath, outDir string, tracks []AudioTrack, p encodeProf
 	return args
 }
 
-// buildArgs 是 buildFFmpegArgs 的实例薄封装，注入当前转码器的硬件加速档位。
+// buildArgs 是 buildFFmpegArgs 的实例薄封装，注入当前转码器的硬件加速与清晰度档位。
 func (t *Transcoder) buildArgs(sess *session, tracks []AudioTrack) []string {
 	return buildFFmpegArgs(sess.video.AbsPath(), sess.dir, tracks,
-		encodeProfile{hwaccel: t.hwaccel, vaapiDevice: t.vaapiDevice})
+		encodeProfile{
+			hwaccel:     t.hwaccel,
+			vaapiDevice: t.vaapiDevice,
+			quality:     qualitySpecs[sess.quality],
+		})
 }
 
 // masterAudioLineRE 匹配 master 播放列表中的 EXT-X-MEDIA 音频行，替换 NAME 属性。
@@ -467,8 +529,15 @@ func (t *Transcoder) rewriteOnce(master string, tracks []AudioTrack) {
 // 的列表下标一致；未产出文件的轨由处理器按文件是否存在返回 404。任一轨失败不影响
 // 其余轨与主转码。
 func (t *Transcoder) extractSubtitles(sess *session, tracks []SubtitleTrack) {
+	// 视频级共享目录 <root>/<videoID>/subs/，与各档位会话目录平级，
+	// 切档或会话重转（RemoveAll 会话目录）都不会清掉已提取字幕。
+	subsDir := filepath.Join(t.dir, sess.video.ID, hlsSubDir)
+	if err := os.MkdirAll(subsDir, 0o755); err != nil {
+		log.Printf("创建共享字幕目录失败 %s: %v", subsDir, err)
+		return
+	}
 	for i, tr := range tracks {
-		out := filepath.Join(sess.dir, fmt.Sprintf("%s%d.vtt", hlsSubPrefix, i))
+		out := filepath.Join(subsDir, fmt.Sprintf("%s%d.vtt", hlsSubPrefix, i))
 		if tr.Bitmap {
 			t.extractBitmapSubtitle(sess, tr, i, out)
 			continue
@@ -527,11 +596,25 @@ func normalizeVTTTimestamps(raw []byte) []byte {
 	return vttShortTimeRE.ReplaceAll(raw, []byte(`${1}00:$2:$3`))
 }
 
-// Get 按视频 ID 查找会话（不存在返回 nil）。
-func (t *Transcoder) Get(videoID string) *session {
+// Get 按视频 ID 与清晰度档位查找会话（不存在返回 nil）。
+// quality 非法时按默认 720p 归一化，与 Ensure 的键规则保持一致。
+func (t *Transcoder) Get(videoID, quality string) *session {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.sessions[videoID]
+	return t.sessions[sessionKey(videoID, NormalizeQuality(quality))]
+}
+
+// SubAssetPath 返回视频级共享内嵌字幕（subs/sub-N.vtt）的磁盘路径。
+// 文件名沿用 subVTTRE 白名单严格校验，杜绝路径穿越；文件不存在时返回错误。
+func (t *Transcoder) SubAssetPath(videoID, name string) (string, error) {
+	if name == "" || name != filepath.Base(name) || !subVTTRE.MatchString(name) {
+		return "", os.ErrNotExist
+	}
+	p := filepath.Join(t.dir, videoID, hlsSubDir, name)
+	if _, err := os.Stat(p); err != nil {
+		return "", err
+	}
+	return p, nil
 }
 
 // reapLoop 定期回收无客户端且空闲超时的会话，停止 ffmpeg 释放 CPU。
@@ -576,8 +659,9 @@ func (t *Transcoder) Close() {
 // ---------- 单个转码会话 ----------
 
 type session struct {
-	video *Video
-	dir   string
+	video   *Video
+	dir     string
+	quality string // 清晰度档位（Quality1080p/720p/480p）
 
 	started   chan struct{} // ffmpeg 进程尝试启动后关闭（成功或失败）
 	startOnce sync.Once
@@ -591,10 +675,11 @@ type session struct {
 	lastAccessV atomicTime // 最近一次被播放器/API 访问的时间
 }
 
-func newSession(v *Video, dir string) *session {
+func newSession(v *Video, dir, quality string) *session {
 	s := &session{
 		video:   v,
 		dir:     dir,
+		quality: quality,
 		started: make(chan struct{}),
 	}
 	s.Touch()
@@ -704,11 +789,12 @@ func (s *session) PlaylistPath() (string, error) {
 //   - 多音轨布局：master.m3u8、out-<变体>-<5 位数字>.ts、out-<变体>.m3u8
 //
 // 严格校验杜绝路径穿越与日志读取。
+// 内嵌字幕 sub-N.vtt 已改为视频级共享，走 Transcoder.SubAssetPath，不在此列。
 var (
 	simpleSegRE  = regexp.MustCompile(`^seg-\d{5}\.ts$`)
 	variantRE    = regexp.MustCompile(`^out-[0-9A-Za-z_-]+$`)
 	variantSegRE = regexp.MustCompile(`^out-[0-9A-Za-z_-]+-\d{5}\.ts$`)
-	subVTTRE     = regexp.MustCompile(`^sub-\d+\.vtt$`) // 内嵌字幕提取产物
+	subVTTRE     = regexp.MustCompile(`^sub-\d+\.vtt$`) // 共享内嵌字幕提取产物（SubAssetPath 白名单）
 )
 
 // AssetPath 校验 HLS 资源名并返回磁盘路径，非法或不存在时返回错误。
@@ -721,7 +807,6 @@ func (s *session) AssetPath(name string) (string, error) {
 	case simpleSegRE.MatchString(name):
 	case strings.HasSuffix(name, ".m3u8") && variantRE.MatchString(strings.TrimSuffix(name, ".m3u8")):
 	case variantSegRE.MatchString(name):
-	case subVTTRE.MatchString(name):
 	default:
 		return "", os.ErrNotExist
 	}

@@ -43,17 +43,26 @@
     </form>
 
     <nav class="view-tabs" aria-label="类型切换">
-      <a href="/?type=all&view={{.View}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .Type "all"}}active{{end}}">全部</a>
-      <a href="/?type=show&view={{.View}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .Type "show"}}active{{end}}">剧集</a>
-      <a href="/?type=movie&view={{.View}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .Type "movie"}}active{{end}}">电影</a>
+      <a href="{{indexURL .Params "type" "all" "genre" ""}}" class="tab {{if eq .Type "all"}}active{{end}}">全部</a>
+      <a href="{{indexURL .Params "type" "show" "genre" ""}}" class="tab {{if eq .Type "show"}}active{{end}}">剧集</a>
+      <a href="{{indexURL .Params "type" "movie" "genre" ""}}" class="tab {{if eq .Type "movie"}}active{{end}}">电影</a>
     </nav>
 
     {{if .StoreOn}}
     <nav class="view-tabs" aria-label="视图切换">
-      <a href="/?type={{.Type}}&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "all"}}active{{end}}">全部</a>
-      <a href="/?type={{.Type}}&view=continue&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "continue"}}active{{end}}">继续观看</a>
-      <a href="/?type={{.Type}}&view=favorites&q={{.Query}}&sort={{.Sort}}" class="tab {{if eq .View "favorites"}}active{{end}}">⭐ 收藏</a>
+      <a href="{{indexURL .Params "view" "all" "genre" ""}}" class="tab {{if eq .View "all"}}active{{end}}">全部</a>
+      <a href="{{indexURL .Params "view" "continue" "genre" ""}}" class="tab {{if eq .View "continue"}}active{{end}}">继续观看</a>
+      <a href="{{indexURL .Params "view" "favorites" "genre" ""}}" class="tab {{if eq .View "favorites"}}active{{end}}">⭐ 收藏</a>
       <a href="/?view=playlists" class="tab {{if eq .View "playlists"}}active{{end}}">📂 播放列表</a>
+    </nav>
+    {{end}}
+
+    {{if and .Genres (ne .View "playlists")}}
+    <nav class="view-tabs genre-tabs" aria-label="影片类型筛选">
+      <a href="{{indexURL .Params "genre" ""}}" class="tab tab-chip {{if eq .Genre ""}}active{{end}}">全部类型</a>
+      {{range .Genres}}
+      <a href="{{indexURL $.Params "genre" .}}" class="tab tab-chip {{if eq $.Genre .}}active{{end}}">{{.}}</a>
+      {{end}}
     </nav>
     {{end}}
 
@@ -84,6 +93,67 @@
         <p class="hint">点击「＋ 新建播放列表」创建合集，把跨目录的电影和剧集单集聚合到一起。</p>
       </div>
       {{end}}
+    </section>
+    {{end}}
+
+    {{if .ContinueCards}}
+    <section class="shelf" aria-label="继续观看">
+      <h2 class="shelf-title">继续观看</h2>
+      <div class="shelf-row">
+        {{range .ContinueCards}}
+        {{$v := .Video}}
+        <a class="shelf-card" href="/watch/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and .Metadata .Metadata.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+            <div class="progress-bar" title="已看到 {{formatDuration .Progress.Position}} / {{formatDuration .Progress.Duration}}">
+              <div class="progress-fill" style="width: {{progressPercent .Progress.Position .Progress.Duration}}%"></div>
+            </div>
+          </div>
+          <div class="meta">
+            {{if and .Metadata .Metadata.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+            <p class="resume-hint">▶ 看到 {{formatDuration .Progress.Position}}</p>
+          </div>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .RecentCards}}
+    <section class="shelf" aria-label="最近加入">
+      <h2 class="shelf-title">最近加入</h2>
+      <div class="shelf-row">
+        {{range .RecentCards}}
+        {{$v := .Video}}
+        <a class="shelf-card" href="/watch/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and .Metadata .Metadata.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+          </div>
+          <div class="meta">
+            {{if and .Metadata .Metadata.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+            <p class="video-path">{{$v.ModTime.Format "2006-01-02"}}</p>
+          </div>
+        </a>
+        {{end}}
+      </div>
     </section>
     {{end}}
 

@@ -135,6 +135,29 @@ func main() {
 		log.Println("未设置 DB_PATH，播放进度与收藏功能关闭（设置该环境变量可开启）")
 	}
 
+	// 过期分享后台清理：惰性删除之外的定时兜底；间隔为 0 时关闭
+	var shareTicker *time.Ticker
+	var shareTickerDone chan struct{}
+	if db != nil && cfg.ShareCleanupInterval > 0 {
+		shareTicker = time.NewTicker(cfg.ShareCleanupInterval)
+		shareTickerDone = make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-shareTicker.C:
+					if n, err := db.DeleteExpiredShares(time.Now().UTC()); err != nil {
+						log.Printf("清理过期分享失败: %v", err)
+					} else if n > 0 {
+						log.Printf("已清理 %d 条过期分享", n)
+					}
+				case <-shareTickerDone:
+					return
+				}
+			}
+		}()
+		log.Printf("过期分享定时清理已开启，间隔 %s", cfg.ShareCleanupInterval)
+	}
+
 	var authenticator *auth.Authenticator
 	if cfg.AuthPassword != "" {
 		authenticator, err = auth.New(cfg.AuthPassword, cfg.AuthSecret, cfg.AuthTTL)
@@ -173,6 +196,10 @@ func main() {
 	if ticker != nil {
 		ticker.Stop()
 		close(tickerDone)
+	}
+	if shareTicker != nil {
+		shareTicker.Stop()
+		close(shareTickerDone)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

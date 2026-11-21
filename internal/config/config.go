@@ -32,6 +32,9 @@ type Config struct {
 	WatchDebounce  time.Duration // 文件事件防抖窗口
 	RescanInterval time.Duration // 定时全量兜底扫描间隔，0 表示关闭
 
+	// 匿名分享：过期分享的后台清理间隔（惰性删除之外的兜底）
+	ShareCleanupInterval time.Duration
+
 	// TMDB 在线刮削：APIKey 留空则禁用，仅保留本地 NFO/海报
 	TMDBAPIKey   string // v3 API Key（Bearer token 不支持，只用 api_key 方式）
 	TMDBLang     string // 元信息语言，如 zh-CN / en-US
@@ -76,6 +79,8 @@ func Load() *Config {
 		WatchEnabled:   getenv("WATCH_ENABLED", "true") != "false",
 		WatchDebounce:  parseDuration("WATCH_DEBOUNCE", 2*time.Second),
 		RescanInterval: parseDuration("RESCAN_INTERVAL", 0),
+
+		ShareCleanupInterval: parseDuration("SHARE_CLEANUP_INTERVAL", time.Hour),
 
 		TMDBAPIKey:   os.Getenv("TMDB_API_KEY"),
 		TMDBLang:     getenv("TMDB_LANG", "zh-CN"),

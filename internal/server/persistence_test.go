@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/coder9527-lg/vedio-website/internal/media"
@@ -274,5 +275,112 @@ func TestRescanPrunesOrphanRecords(t *testing.T) {
 	}
 	if len(after.Items) != 1 || after.Items[0].VideoID != id {
 		t.Fatalf("重扫后应只剩真实视频条目，实际 %+v", after.Items)
+	}
+}
+
+// TestHomeShelfRows 验证首页横向行：继续观看按 progress 最近更新排序且过滤无效进度，
+// 最近加入按 ModTime 倒序；非默认视图（带筛选参数）不渲染横向行。
+func TestHomeShelfRows(t *testing.T) {
+	srv, ts, videoID := newPersistTestServer(t)
+
+	// 再造两个视频文件并重扫，库内共 3 个视频
+	root := srv.library.Root()
+	extra1 := filepath.Join(root, "b-movie.mp4")
+	extra2 := filepath.Join(root, "c-show.mp4")
+	if err := os.WriteFile(extra1, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(extra2, []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.library.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	all := srv.library.List()
+	if len(all) != 3 {
+		t.Fatalf("应有 3 个视频，got %d", len(all))
+	}
+	idByName := map[string]string{}
+	for _, v := range all {
+		idByName[v.Name] = v.ID
+	}
+
+	// 有效进度（100s/600s）写到 b-movie；片头抖动（2s）写到 c-show，应被过滤
+	if err := srv.store.SaveProgress(idByName["b-movie"], 100, 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveProgress(idByName["c-show"], 2, 600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 构建器直接断言
+	continueCards := srv.buildContinueShelf()
+	if len(continueCards) != 1 || continueCards[0].Video.ID != idByName["b-movie"] {
+		t.Fatalf("继续观看行应只剩 b-movie 一条，got %+v", continueCards)
+	}
+	recent := srv.buildRecentShelf()
+	if len(recent) != 3 {
+		t.Fatalf("最近加入行应有 3 张卡，got %d", len(recent))
+	}
+
+	// 默认首页 HTML 含两个横向行标题
+	res, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAllString(t, res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("首页应 200，got %d", res.StatusCode)
+	}
+	if !strings.Contains(body, "继续观看") || !strings.Contains(body, "最近加入") {
+		t.Fatal("默认首页应渲染两个横向行标题")
+	}
+	if !strings.Contains(body, "shelf-row") {
+		t.Fatal("默认首页应包含横向滚动容器")
+	}
+
+	// 带搜索参数时不渲染横向行
+	res2, _ := http.Get(ts.URL + "/?q=xxx")
+	body2 := readAllString(t, res2.Body)
+	res2.Body.Close()
+	if strings.Contains(body2, "shelf-row") {
+		t.Fatal("搜索态不应渲染横向行")
+	}
+
+	// 无持久化服务不应渲染横向行（静默降级）
+	inMemLib := media.NewLibrary(t.TempDir(), media.DefaultExts)
+	inMemSrv, err := New(inMemLib, srv.thumbs, nil, nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts2 := newHTTPTestServer(t, inMemSrv.Handler())
+	res3, _ := http.Get(ts2.URL + "/")
+	body3 := readAllString(t, res3.Body)
+	res3.Body.Close()
+	if strings.Contains(body3, "shelf-row") {
+		t.Fatal("无 DB 模式不应渲染横向行")
+	}
+
+	_ = videoID // 夹具自带视频，保持引用清晰
+}
+
+// TestHasProgressValue 锁定续播过滤口径。
+func TestHasProgressValue(t *testing.T) {
+	cases := []struct {
+		name          string
+		position, dur float64
+		want          bool
+	}{
+		{"片头抖动", 2, 600, false},
+		{"正常续播", 100, 600, true},
+		{"接近看完", 580, 600, false}, // 96.7% >= 95%
+		{"时长未知但位置足够", 30, 0, true},
+		{"零位置", 0, 600, false},
+	}
+	for _, c := range cases {
+		if got := hasProgressValue(c.position, c.dur); got != c.want {
+			t.Fatalf("%s: want %v got %v", c.name, c.want, got)
+		}
 	}
 }

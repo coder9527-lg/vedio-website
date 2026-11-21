@@ -2,7 +2,7 @@ package media
 
 import (
 	"path/filepath"
-	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -18,72 +18,127 @@ func containsAll(t *testing.T, args []string, want ...string) {
 	}
 }
 
-// TestBuildFFmpegArgsSoftwareProfile 锁定软转档位参数与重构前逐参一致，
-// 保证默认行为（TRANSCODE_HWACCEL 留空）零变化。
-func TestBuildFFmpegArgsSoftwareProfile(t *testing.T) {
-	videoPath := filepath.Join(t.TempDir(), "movie.mkv")
-	outDir := t.TempDir()
-
-	// 单音轨简单布局
-	args := buildFFmpegArgs(videoPath, outDir, nil, encodeProfile{})
-	want := []string{
-		"-y", "-i", videoPath,
-		"-map", "0:v:0", "-map", "0:a:0?",
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-		"-c:a", "aac", "-b:a", "128k", "-ac", "2", "-sn",
-		"-f", "hls", "-hls_time", "4",
-		"-hls_flags", "append_list+independent_segments",
-		"-hls_list_size", "0",
-		"-hls_segment_filename", filepath.Join(outDir, "seg-%05d.ts"),
-		filepath.Join(outDir, hlsPlaylistName),
-	}
-	if !reflect.DeepEqual(args, want) {
-		t.Fatalf("软转单音轨参数与重构前不一致\n got: %v\nwant: %v", args, want)
-	}
-
-	// 软转绝不能出现任何硬件加速片段
-	if strings.Contains(strings.Join(args, " "), "vaapi") {
-		t.Fatalf("软转参数不应包含 vaapi: %v", args)
-	}
-}
-
-// TestBuildFFmpegArgsVAAPIProfile 验证 VAAPI 档位的输入设备选项、硬编参数与滤镜。
-func TestBuildFFmpegArgsVAAPIProfile(t *testing.T) {
-	videoPath := filepath.Join(t.TempDir(), "movie.mkv")
-	outDir := t.TempDir()
-	dev := "/dev/dri/renderD128"
-
-	args := buildFFmpegArgs(videoPath, outDir, nil,
-		encodeProfile{hwaccel: "vaapi", vaapiDevice: dev})
+// containsNone 断言 args 不包含任何禁用片段（用于隔离不同档位的参数）。
+func containsNone(t *testing.T, args []string, banned ...string) {
+	t.Helper()
 	joined := strings.Join(args, " ")
-
-	// 输入前的硬件设备初始化必须在 -i 之前
-	inputIdx := indexOf(args, "-i")
-	for _, flag := range []string{"-hwaccel", "-init_hw_device", "-hwaccel_device", "-hwaccel_output_format"} {
-		idx := indexOf(args, flag)
-		if idx < 0 || idx > inputIdx {
-			t.Fatalf("%s 必须存在且位于 -i 之前，参数: %v", flag, args)
+	for _, b := range banned {
+		if strings.Contains(joined, b) {
+			t.Fatalf("参数中不应出现 %q\n实际参数: %v", b, args)
 		}
 	}
-	containsAll(t, args,
-		"-init_hw_device", "vaapi=va:"+dev,
-		"-hwaccel_output_format", "vaapi",
-		"-c:v", "h264_vaapi",
-		"-b:v", "4000k",
-		"-vf", "scale_vaapi=format=nv12",
-	)
-	// VAAPI 不支持 libx264 的 preset/crf，必须彻底移除
-	for _, banned := range []string{"libx264", "-preset", "-crf", "scale=trunc"} {
-		if strings.Contains(joined, banned) {
-			t.Fatalf("VAAPI 参数不应包含 %q: %v", banned, args)
-		}
-	}
-	// 音频、HLS 公共选项保持不变
-	containsAll(t, args, "-c:a", "aac", "-sn", "-f", "hls", "-hls_list_size", "0")
 }
 
-// TestBuildFFmpegArgsMultiAudioKept 在两种档位下都保留多音轨变体布局。
+// qualityProfileCases 覆盖三档清晰度 × 软转/VAAPI 两套编码路径，共 6 组。
+func qualityProfileCases() []struct {
+	name    string
+	profile encodeProfile
+	spec    QualitySpec
+} {
+	quals := []struct {
+		name string
+		q    string
+	}{
+		{"1080p", Quality1080p},
+		{"720p", Quality720p},
+		{"480p", Quality480p},
+	}
+	var cases []struct {
+		name    string
+		profile encodeProfile
+		spec    QualitySpec
+	}
+	for _, q := range quals {
+		spec := qualitySpecs[q.q]
+		cases = append(cases,
+			struct {
+				name    string
+				profile encodeProfile
+				spec    QualitySpec
+			}{"软转-" + q.name, encodeProfile{quality: spec}, spec},
+			struct {
+				name    string
+				profile encodeProfile
+				spec    QualitySpec
+			}{"VAAPI-" + q.name, encodeProfile{hwaccel: "vaapi", vaapiDevice: "/dev/dri/renderD128", quality: spec}, spec},
+		)
+	}
+	return cases
+}
+
+// TestBuildFFmpegArgsQualityProfiles 表驱动验证各档位的缩放高度、CRF/码率，
+// 并断言不会混入其他档位的参数（保证档位之间真正隔离）。
+func TestBuildFFmpegArgsQualityProfiles(t *testing.T) {
+	videoPath := filepath.Join(t.TempDir(), "movie.mkv")
+	outDir := t.TempDir()
+
+	for _, tc := range qualityProfileCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			args := buildFFmpegArgs(videoPath, outDir, nil, tc.profile)
+
+			if tc.profile.hwaccel == "vaapi" {
+				// 输入前的硬件设备初始化必须在 -i 之前
+				inputIdx := indexOf(args, "-i")
+				for _, flag := range []string{"-hwaccel", "-init_hw_device", "-hwaccel_device", "-hwaccel_output_format"} {
+					idx := indexOf(args, flag)
+					if idx < 0 || idx > inputIdx {
+						t.Fatalf("%s 必须存在且位于 -i 之前，参数: %v", flag, args)
+					}
+				}
+				containsAll(t, args,
+					"-init_hw_device", "vaapi=va:"+tc.profile.vaapiDevice,
+					"-hwaccel_output_format", "vaapi",
+					"-c:v", "h264_vaapi",
+					"-b:v", tc.spec.VideoBitrate,
+					"-vf", "scale_vaapi=w=-2:h=min(ih\\,"+strconv.Itoa(tc.spec.Height)+"):format=nv12",
+				)
+				containsNone(t, args, "libx264", "-preset", "-crf", "scale=trunc", "scale=-2")
+			} else {
+				containsAll(t, args,
+					"-c:v", "libx264",
+					"-preset", "veryfast",
+					"-crf", strconv.Itoa(tc.spec.CRF),
+					"-vf", "scale=-2:min(ih\\,"+strconv.Itoa(tc.spec.Height)+")",
+				)
+				containsNone(t, args, "vaapi", "scale=trunc")
+			}
+
+			// 音频不分档、HLS 公共选项保持不变
+			containsAll(t, args, "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-sn",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "0",
+				"-hls_segment_filename", filepath.Join(outDir, "seg-%05d.ts"),
+				filepath.Join(outDir, hlsPlaylistName))
+
+			// 档位隔离：参数中不得出现其他档位的高度/CRF/码率
+			for otherQ, other := range qualitySpecs {
+				if otherQ == "" || other == tc.spec {
+					continue
+				}
+				containsNone(t, args,
+					"min(ih\\,"+strconv.Itoa(other.Height)+")",
+					"-crf "+strconv.Itoa(other.CRF),
+					other.VideoBitrate,
+				)
+			}
+		})
+	}
+}
+
+// TestNormalizeQuality 验证档位白名单与默认回退。
+func TestNormalizeQuality(t *testing.T) {
+	for _, q := range []string{Quality1080p, Quality720p, Quality480p} {
+		if got := NormalizeQuality(q); got != q {
+			t.Errorf("NormalizeQuality(%q) = %q，期望原样返回", q, got)
+		}
+	}
+	for _, bad := range []string{"", "4k", "1080P", "../etc", "null"} {
+		if got := NormalizeQuality(bad); got != Quality720p {
+			t.Errorf("NormalizeQuality(%q) = %q，期望回退 %q", bad, got, Quality720p)
+		}
+	}
+}
+
+// TestBuildFFmpegArgsMultiAudioKept 在软转与 VAAPI 下都保留多音轨变体布局。
 func TestBuildFFmpegArgsMultiAudioKept(t *testing.T) {
 	outDir := t.TempDir()
 	tracks := []AudioTrack{
@@ -92,8 +147,8 @@ func TestBuildFFmpegArgsMultiAudioKept(t *testing.T) {
 	}
 
 	for _, p := range []encodeProfile{
-		{},
-		{hwaccel: "vaapi", vaapiDevice: "/dev/dri/renderD128"},
+		{quality: qualitySpecs[Quality720p]},
+		{hwaccel: "vaapi", vaapiDevice: "/dev/dri/renderD128", quality: qualitySpecs[Quality720p]},
 	} {
 		args := buildFFmpegArgs("in.mkv", outDir, tracks, p)
 		containsAll(t, args,
