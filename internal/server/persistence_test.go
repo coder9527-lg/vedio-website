@@ -207,6 +207,10 @@ func TestPersistenceDisabledReturns503(t *testing.T) {
 		{http.MethodGet, "/api/v1/favorites"},
 		{http.MethodPut, "/api/v1/videos/x/progress"},
 		{http.MethodPost, "/api/v1/videos/x/favorite"},
+		// 片头片尾跳过设置 3 条路由在持久化关闭时同样应 503
+		{http.MethodGet, "/api/v1/videos/x/skip"},
+		{http.MethodPut, "/api/v1/videos/x/skip"},
+		{http.MethodDelete, "/api/v1/videos/x/skip"},
 		// 播放列表 10 条路由在持久化关闭时同样应 503
 		{http.MethodGet, "/api/v1/playlists"},
 		{http.MethodPost, "/api/v1/playlists"},
