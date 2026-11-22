@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{.Title}}</title>
   <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
   <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
   <link rel="manifest" href="/static/manifest.webmanifest">
   <meta name="theme-color" content="#0f172a">
@@ -18,6 +32,7 @@
   <header class="site-header">
     <h1><a href="/" class="back-link">← 返回视频库</a></h1>
     <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
       {{if .AuthEnabled}}
       <form method="post" action="/logout" class="inline-form">
         <button type="submit" class="btn-secondary">退出登录</button>
