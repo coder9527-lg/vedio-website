@@ -120,6 +120,14 @@ func (m *Metadata) empty() bool {
 		len(m.Actors) == 0 && m.Studio == "" && m.PosterPath == "" && m.BackdropPath == ""
 }
 
+// manualEmpty 判断手动编辑覆盖文件的 10 个核心文本字段是否全空；
+// 图片路径与来源不参与（手动表单不含这些字段），全空时覆盖文件应被删除而非保留。
+func (m *Metadata) manualEmpty() bool {
+	return m.Title == "" && m.Original == "" && m.Overview == "" && m.Year == "" &&
+		m.Runtime == 0 && m.Rating == 0 && len(m.Genres) == 0 && len(m.Directors) == 0 &&
+		len(m.Actors) == 0 && m.Studio == ""
+}
+
 // loadMetadata 为单个视频发现 NFO 与本地海报/背景图。
 // 任何一步失败都返回已收集到的部分结果，绝不因元信息问题影响视频本身可用；
 // 两者都缺失时返回 nil，便于调用方区分「无元信息」与「有部分元信息」。

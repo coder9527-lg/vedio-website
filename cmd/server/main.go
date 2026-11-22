@@ -25,6 +25,9 @@ func main() {
 	cfg := config.Load()
 
 	library := media.NewLibrary(cfg.MediaDir, media.DefaultExts)
+	// 无条件登记缓存目录：手动元信息编辑只依赖该可写目录，与是否配置 TMDB_API_KEY 解耦；
+	// 在线刮削器创建时会幂等重复登记同值。
+	library.SetScraperImageDir(cfg.TMDBImageDir)
 
 	// TMDB 在线刮削（可选）：必须在初始扫描前创建，扫描时才能从缓存目录恢复历史刮削结果。
 	// 未配置 API Key 时整个功能关闭，不影响本地 NFO/海报。

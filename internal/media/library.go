@@ -4,6 +4,8 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -118,6 +120,10 @@ func (l *Library) Scan() (int, error) {
 			meta[id] = merged
 		} else if local != nil {
 			meta[id] = local
+		}
+		// 手动编辑覆盖优先级最高，叠加在 NFO/刮削合并结果之上（文件缺失时静默跳过）
+		if man := l.loadManualMetadata(id); man != nil {
+			meta[id] = mergeManual(meta[id], man)
 		}
 	}
 
@@ -290,6 +296,142 @@ func (l *Library) loadPersistedMetadata(videoID string) *Metadata {
 	return &md
 }
 
+// manualMetadataPath 返回某视频手动编辑元信息的持久化文件路径；
+// 未配置缓存目录时返回空串，表示手动编辑不可用。
+func (l *Library) manualMetadataPath(videoID string) string {
+	if l.scraperImageDir == "" {
+		return ""
+	}
+	return filepath.Join(l.scraperImageDir, videoID, "manual.json")
+}
+
+// loadManualMetadata 读取手动编辑覆盖文件；目录未配置、文件缺失或解析失败时返回 nil（静默降级）。
+func (l *Library) loadManualMetadata(videoID string) *Metadata {
+	path := l.manualMetadataPath(videoID)
+	if path == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var md Metadata
+	if err := json.Unmarshal(raw, &md); err != nil || md.manualEmpty() {
+		return nil
+	}
+	return &md
+}
+
+// mergeManual 以 base 为基底，用 manual 中的非零核心字段覆盖对应值；
+// 海报/背景图路径不参与手动覆盖（表单不含图片字段），始终保留 base 的图片。
+// 切片字段非 nil 即整体替换（空切片表示用户主动清空）。base 为 nil 时返回 manual 的副本。
+func mergeManual(base, manual *Metadata) *Metadata {
+	if manual == nil || manual.manualEmpty() {
+		return base
+	}
+	if base == nil {
+		cp := *manual
+		return &cp
+	}
+	out := *base
+	if manual.Title != "" {
+		out.Title = manual.Title
+	}
+	if manual.Original != "" {
+		out.Original = manual.Original
+	}
+	if manual.Overview != "" {
+		out.Overview = manual.Overview
+	}
+	if manual.Year != "" {
+		out.Year = manual.Year
+	}
+	if manual.Runtime != 0 {
+		out.Runtime = manual.Runtime
+	}
+	if manual.Rating != 0 {
+		out.Rating = manual.Rating
+	}
+	if manual.Studio != "" {
+		out.Studio = manual.Studio
+	}
+	if manual.Genres != nil {
+		out.Genres = append([]string(nil), manual.Genres...)
+	}
+	if manual.Directors != nil {
+		out.Directors = append([]string(nil), manual.Directors...)
+	}
+	if manual.Actors != nil {
+		out.Actors = append([]string(nil), manual.Actors...)
+	}
+	return &out
+}
+
+// ErrMetadataDirNotConfigured 表示未配置缓存目录，手动编辑无处持久化。
+var ErrMetadataDirNotConfigured = errors.New("metadata 缓存目录未配置，手动编辑不可用")
+
+// SaveManualMetadata 保存（或清空）某视频的手动编辑元信息并重建内存合并结果。
+// md 为 nil 或核心字段全空时删除 manual.json，回退到 NFO/刮削值。
+func (l *Library) SaveManualMetadata(videoID string, md *Metadata) error {
+	l.mu.RLock()
+	_, ok := l.videos[videoID]
+	l.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("视频不存在: %s", videoID)
+	}
+	path := l.manualMetadataPath(videoID)
+	if path == "" {
+		return ErrMetadataDirNotConfigured
+	}
+
+	// 清空场景：删除覆盖文件（文件本就不存在也视为成功），随后重建合并结果
+	if md == nil || md.manualEmpty() {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	} else {
+		if err := writeJSONAtomic(path, md); err != nil {
+			return err
+		}
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rebuildMetadataLocked(videoID)
+	if key := l.showKeyByVideoLocked(videoID); key != "" {
+		l.rebuildShowLocked(key)
+	}
+	return nil
+}
+
+// rebuildMetadataLocked 按 NFO → 刮削缓存 → 手动覆盖的优先级重建单个视频的内存元信息。
+// 调用方须持有写锁。
+func (l *Library) rebuildMetadataLocked(videoID string) {
+	v, ok := l.videos[videoID]
+	if !ok {
+		return
+	}
+	local := loadMetadata(l.root, v)
+	var base *Metadata
+	if saved := l.loadPersistedMetadata(videoID); saved != nil {
+		base = mergeMetadata(local, saved)
+		if local != nil {
+			base.Source = mergedSource(local)
+		}
+	} else {
+		base = local
+	}
+	merged := mergeManual(base, l.loadManualMetadata(videoID))
+	if merged == nil || merged.empty() {
+		delete(l.metadata, videoID)
+	} else {
+		l.metadata[videoID] = merged
+	}
+}
+
+// ScraperImageDir 暴露缓存目录，供 HTTP 层判断手动编辑是否可用。
+func (l *Library) ScraperImageDir() string { return l.scraperImageDir }
+
 // SetMetadata 直接写入视频的刮削元信息（在线刮削合并后回写）；
 // md 为 nil 或全空时删除该视频的元信息记录。
 func (l *Library) SetMetadata(videoID string, md *Metadata) {
@@ -316,6 +458,10 @@ func (l *Library) RefreshMetadata(videoID string) {
 		return
 	}
 	md := loadMetadata(l.root, v)
+	// NFO/海报变更重建后，手动编辑的覆盖值仍需保留
+	if man := l.loadManualMetadata(videoID); man != nil {
+		md = mergeManual(md, man)
+	}
 	l.mu.Lock()
 	if md != nil {
 		l.metadata[videoID] = md

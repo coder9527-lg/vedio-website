@@ -279,6 +279,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		StoreOn        bool
 		TranscodeOn    bool
 		ScrapeOn       bool
+		MetadataEditOn bool // 是否启用元信息手动编辑（仅依赖可写缓存目录，与刮削开关解耦）
 		NativePlayable bool
 		Subtitles      []*media.Subtitle
 		ShowID         string
@@ -296,6 +297,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		StoreOn:        s.storeEnabled(),
 		TranscodeOn:    s.transcodeEnabled(),
 		ScrapeOn:       s.scraperEnabled(),
+		MetadataEditOn: s.metadataEditEnabled(),
 		NativePlayable: isNativePlayable(v.Ext),
 		Subtitles:      subtitles,
 		ShowID:         showID,

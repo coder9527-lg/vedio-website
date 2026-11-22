@@ -128,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/videos", s.handleAPIList)
 	mux.HandleFunc("GET /api/v1/videos/{id}", s.handleAPIGet)
 	mux.HandleFunc("GET /api/v1/videos/{id}/metadata", s.handleAPIMetadata)
+	// 手动编辑元信息（仅依赖可写缓存目录，未配置时 handler 返回 503）
+	mux.HandleFunc("PUT /api/v1/videos/{id}/metadata", s.handleMetadataEdit)
 	mux.HandleFunc("POST /api/v1/rescan", s.handleRescan)
 
 	// 本地海报/背景图（NFO/命名约定/TMDB 缓存发现，仅提供已登记的图片）

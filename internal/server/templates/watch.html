@@ -56,6 +56,9 @@
     {{if .ScrapeOn}}
     <button type="button" id="scrape-btn" class="btn-secondary scrape-btn">🔍 在线刮削</button>
     {{end}}
+    {{if .MetadataEditOn}}
+    <button type="button" id="metadata-edit-btn" class="btn-secondary scrape-btn">✏️ 编辑信息</button>
+    {{end}}
     </div>
     {{if and .Metadata.Title (ne .Metadata.Title .Video.Name)}}
     <p class="watch-original-title">{{.Video.Name}}{{if .Metadata.Original}} · {{.Metadata.Original}}{{end}}</p>
@@ -274,6 +277,37 @@
           <button type="button" id="scrape-close" class="scrape-close" aria-label="关闭">✕</button>
         </div>
         <div id="scrape-body" class="scrape-body"><p class="scrape-hint">正在搜索 TMDB…</p></div>
+      </div>
+    </div>
+    {{end}}
+
+    {{if .MetadataEditOn}}
+    <div id="metadata-edit-modal" class="scrape-modal" hidden>
+      <div class="scrape-dialog me-dialog" role="dialog" aria-modal="true" aria-labelledby="me-dialog-title">
+        <div class="scrape-dialog-head">
+          <h3 id="me-dialog-title">编辑影片信息</h3>
+          <button type="button" id="me-close" class="scrape-close" aria-label="关闭">✕</button>
+        </div>
+        <form id="me-form" class="scrape-body me-form">
+          <label class="me-field"><span>片名</span><input type="text" id="me-title" class="pl-rename-input" maxlength="200"></label>
+          <label class="me-field"><span>原始片名</span><input type="text" id="me-original" class="pl-rename-input" maxlength="200"></label>
+          <div class="me-row">
+            <label class="me-field"><span>年份</span><input type="text" id="me-year" class="pl-rename-input" inputmode="numeric" maxlength="4" placeholder="如 2024"></label>
+            <label class="me-field"><span>片长（分钟）</span><input type="number" id="me-runtime" class="pl-rename-input" min="0" step="1" placeholder="整数"></label>
+            <label class="me-field"><span>评分（0-10）</span><input type="number" id="me-rating" class="pl-rename-input" min="0" max="10" step="0.1" placeholder="如 8.5"></label>
+          </div>
+          <label class="me-field"><span>类型（逗号分隔）</span><input type="text" id="me-genres" class="pl-rename-input" placeholder="剧情, 科幻"></label>
+          <label class="me-field"><span>导演（逗号分隔）</span><input type="text" id="me-directors" class="pl-rename-input"></label>
+          <label class="me-field"><span>主演（逗号分隔）</span><input type="text" id="me-actors" class="pl-rename-input"></label>
+          <label class="me-field"><span>出品方</span><input type="text" id="me-studio" class="pl-rename-input" maxlength="200"></label>
+          <label class="me-field"><span>剧情简介</span><textarea id="me-overview" class="pl-rename-input me-textarea" rows="5" maxlength="5000"></textarea></label>
+          <p class="pl-hint" id="me-error" role="alert" hidden></p>
+          <div class="me-actions">
+            <button type="submit" class="btn-primary" id="me-save">保存</button>
+            <button type="button" class="btn-secondary" id="me-cancel">取消</button>
+          </div>
+          <p class="pl-hint">手动修改的字段会保留，重新在线刮削也不会覆盖；留空的字段回退到刮削/NFO 值。</p>
+        </form>
       </div>
     </div>
     {{end}}
@@ -2940,6 +2974,134 @@
           btn.focus();
         }
       });
+    })();
+
+    // 元信息手动编辑：拉取当前生效值回填、校验并 PUT 提交，手动值由后端持久化且优先于刮削/NFO
+    (function () {
+      const openBtn = document.getElementById('metadata-edit-btn');
+      const modal = document.getElementById('metadata-edit-modal');
+      if (!openBtn || !modal) return;
+      const form = document.getElementById('me-form');
+      const errorBox = document.getElementById('me-error');
+      const saveBtn = document.getElementById('me-save');
+      const videoId = {{printf "%q" .Video.ID}};
+      const fields = {
+        title: document.getElementById('me-title'),
+        original: document.getElementById('me-original'),
+        overview: document.getElementById('me-overview'),
+        year: document.getElementById('me-year'),
+        runtime: document.getElementById('me-runtime'),
+        rating: document.getElementById('me-rating'),
+        genres: document.getElementById('me-genres'),
+        directors: document.getElementById('me-directors'),
+        actors: document.getElementById('me-actors'),
+        studio: document.getElementById('me-studio')
+      };
+
+      const showError = (msg) => {
+        errorBox.textContent = msg;
+        errorBox.hidden = !msg;
+      };
+      const open = () => { modal.hidden = false; };
+      const close = () => { modal.hidden = true; showError(''); };
+
+      // 逗号分隔文本 → 去空白去空串的数组；输入框为空时返回 null（保留原值）而非空数组（清空）
+      const splitList = (raw) => {
+        const text = raw.trim();
+        if (!text) return null;
+        return text.split(',').map((s) => s.trim()).filter(Boolean);
+      };
+
+      openBtn.addEventListener('click', async () => {
+        open();
+        // 先清空并禁用保存，避免回填期间提交旧数据
+        Object.values(fields).forEach((el) => { el.value = ''; });
+        saveBtn.disabled = true;
+        showError('正在加载当前信息…');
+        try {
+          const res = await fetch('/api/v1/videos/' + videoId + '/metadata');
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (!res.ok && res.status !== 404) throw new Error('HTTP ' + res.status);
+          // 404（尚无任何元信息）时用空表单兜底，允许从零录入
+          const data = res.status === 404 ? {} : await res.json();
+          fields.title.value = data.title || '';
+          fields.original.value = data.original || '';
+          fields.overview.value = data.overview || '';
+          fields.year.value = data.year || '';
+          fields.runtime.value = data.runtime || '';
+          fields.rating.value = data.rating || '';
+          fields.genres.value = Array.isArray(data.genres) ? data.genres.join(', ') : '';
+          fields.directors.value = Array.isArray(data.directors) ? data.directors.join(', ') : '';
+          fields.actors.value = Array.isArray(data.actors) ? data.actors.join(', ') : '';
+          fields.studio.value = data.studio || '';
+          showError('');
+        } catch (err) {
+          showError('加载失败：' + err.message);
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        showError('');
+
+        const runtimeRaw = fields.runtime.value.trim();
+        const ratingRaw = fields.rating.value.trim();
+        const yearRaw = fields.year.value.trim();
+        const runtime = runtimeRaw === '' ? 0 : Number(runtimeRaw);
+        const rating = ratingRaw === '' ? 0 : Number(ratingRaw);
+        if (runtimeRaw !== '' && (!Number.isInteger(runtime) || runtime < 0)) {
+          showError('片长必须是不小于 0 的整数（分钟）');
+          return;
+        }
+        if (ratingRaw !== '' && (Number.isNaN(rating) || rating < 0 || rating > 10)) {
+          showError('评分必须在 0 到 10 之间');
+          return;
+        }
+        if (yearRaw !== '' && !/^\d{4}$/.test(yearRaw)) {
+          showError('年份必须是 4 位数字');
+          return;
+        }
+
+        const payload = {
+          title: fields.title.value.trim(),
+          original: fields.original.value.trim(),
+          overview: fields.overview.value.trim(),
+          year: yearRaw,
+          runtime,
+          rating,
+          genres: splitList(fields.genres.value),
+          directors: splitList(fields.directors.value),
+          actors: splitList(fields.actors.value),
+          studio: fields.studio.value.trim()
+        };
+
+        saveBtn.disabled = true;
+        try {
+          const res = await fetch('/api/v1/videos/' + videoId + '/metadata', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showError(err.error || ('保存失败（HTTP ' + res.status + '）'));
+            return;
+          }
+          location.reload();
+        } catch (err) {
+          showError('保存失败：' + err.message);
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+
+      document.getElementById('me-close').addEventListener('click', close);
+      document.getElementById('me-cancel').addEventListener('click', close);
+      modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) close(); });
     })();
   </script>
 </body>

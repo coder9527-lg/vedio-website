@@ -140,8 +140,10 @@ func (s *Scraper) Apply(ctx context.Context, videoID string, tmdbID int64) (*Met
 		// 持久化失败不阻断本次刮削，仅记录；重扫后该结果无法恢复
 		fmt.Fprintf(os.Stderr, "警告: 持久化刮削结果失败 %s: %v\n", videoID, err)
 	}
-	s.library.SetMetadata(videoID, merged)
-	return merged, nil
+	// 手动编辑覆盖优先：metadata.json 仍存纯刮削合并结果便于回溯，内存生效值再叠加 manual.json
+	final := mergeManual(merged, s.library.loadManualMetadata(videoID))
+	s.library.SetMetadata(videoID, final)
+	return final, nil
 }
 
 // mergedSource 判断合并后的来源标记：本地 NFO 存在则标 nfo+tmdb，否则 tmdb。

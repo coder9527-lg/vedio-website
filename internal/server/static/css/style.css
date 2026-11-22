@@ -834,6 +834,20 @@ button:disabled { opacity: .6; cursor: wait; }
 }
 .pl-rename-input:focus { outline: none; border-color: var(--accent); }
 .pl-hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; min-height: 18px; }
+
+/* 元信息手动编辑弹窗：表单网格、字段标签与操作按钮（复用 scrape-modal 骨架与 pl-rename-input 输入样式） */
+.me-dialog { width: min(640px, 100%); }
+.me-form { gap: 12px; }
+.me-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.me-field .pl-rename-input { width: 100%; font-size: 14px; color: var(--text); }
+.me-textarea { resize: vertical; min-height: 96px; font-family: inherit; line-height: 1.5; }
+.me-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.me-actions { display: flex; gap: 10px; margin-top: 4px; }
+.me-actions button { min-width: 96px; }
+#me-error { color: var(--danger); min-height: 0; }
+@media (max-width: 600px) {
+  .me-row { grid-template-columns: 1fr; }
+}
 .pl-manage-toolbar {
   display: flex;
   gap: 8px;
