@@ -246,12 +246,32 @@ button:disabled { opacity: .6; cursor: wait; }
 .watch-container { max-width: 960px; }
 .watch-title { margin: 0 0 16px; font-size: 22px; word-break: break-all; }
 .player-wrap {
+  position: relative;
   background: #000;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--border);
 }
 .player-wrap video { width: 100%; max-height: 75vh; display: block; }
+
+/* 触控手势中央指示层：仅触屏设备由手势脚本控制显隐 */
+.gesture-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 10px 20px;
+  border-radius: 10px;
+  background: rgba(8, 15, 30, .78);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
+  backdrop-filter: blur(4px);
+}
+.gesture-indicator[hidden] { display: none; }
 
 .info-list { margin: 20px 0; display: grid; gap: 8px; }
 .info-list div { display: flex; gap: 12px; font-size: 14px; }

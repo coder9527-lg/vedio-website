@@ -203,6 +203,8 @@
         你的浏览器不支持 HTML5 视频播放，可
         <a href="/stream/{{.Video.ID}}?download=1">下载文件</a> 后播放。
       </video>
+      <!-- 触控手势中央指示层：仅触屏设备的手势脚本会解除 hidden -->
+      <div id="gesture-indicator" class="gesture-indicator" hidden aria-hidden="true"></div>
     </div>
 
     {{if .StoreOn}}
@@ -1166,6 +1168,144 @@
         session.setActionHandler('nexttrack', null);
         session.setActionHandler('previoustrack', null);
       }
+    })();
+  </script>
+
+  <!-- 触控手势：仅触屏设备生效，桌面端守卫直接返回；与键盘快捷键段互不引用 -->
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const wrap = document.querySelector('.player-wrap');
+      const indicator = document.getElementById('gesture-indicator');
+      // 非触屏设备完全不绑定，避免影响鼠标交互
+      if (!player || !wrap || !indicator ||
+          !('ontouchstart' in window) || navigator.maxTouchPoints < 1) return;
+
+      // 手势判定参数：位移阈值 12px，双击窗口 300ms，双击快进退 10 秒
+      const GESTURE_TAP_SLOP = 12;
+      const GESTURE_DOUBLE_MS = 300;
+      const GESTURE_SEEK_SECONDS = 10;
+      // Web 无法控制系统亮度，用 CSS filter 模拟，范围 0.3–1.5
+      const BRIGHTNESS_MIN = 0.3;
+      const BRIGHTNESS_MAX = 1.5;
+
+      let startX = 0, startY = 0, startCurrent = 0, startVolume = 0;
+      let startBrightness = 1;
+      let direction = null; // 'h' 水平 seek | 'v-bright' 亮度 | 'v-volume' 音量
+      let moved = false;
+      let lastTapAt = 0, lastTapX = 0;
+      let indicatorTimer = null;
+
+      // 段内自带格式化，不跨段引用其他 IIFE 的函数
+      function fmt(sec) {
+        if (!isFinite(sec) || sec < 0) sec = 0;
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = Math.floor(sec % 60);
+        const pad = (n) => String(n).padStart(2, '0');
+        return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+      }
+
+      function showIndicator(text) {
+        indicator.textContent = text;
+        indicator.hidden = false;
+        if (indicatorTimer) clearTimeout(indicatorTimer);
+        indicatorTimer = setTimeout(() => { indicator.hidden = true; }, 800);
+      }
+
+      function currentBrightness() {
+        const m = /brightness\(([\d.]+)\)/.exec(player.style.filter || '');
+        return m ? parseFloat(m[1]) : 1;
+      }
+
+      wrap.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return; // 单指手势，多指交给浏览器
+        const t = e.touches[0];
+        startX = t.clientX;
+        startY = t.clientY;
+        startCurrent = player.currentTime || 0;
+        startVolume = player.volume;
+        startBrightness = currentBrightness();
+        direction = null;
+        moved = false;
+      }, { passive: true });
+
+      wrap.addEventListener('touchmove', (e) => {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+
+        // 首个超阈值移动锁定方向，避免抖动串手势
+        if (!direction) {
+          if (Math.abs(dx) < GESTURE_TAP_SLOP && Math.abs(dy) < GESTURE_TAP_SLOP) return;
+          moved = true;
+          direction = Math.abs(dx) > Math.abs(dy)
+            ? 'h'
+            : (startX < wrap.getBoundingClientRect().width / 2 ? 'v-bright' : 'v-volume');
+        }
+        e.preventDefault(); // 拖动期间阻止页面滚动与原生控件
+
+        if (direction === 'h') {
+          // 水平拖动：按位移占容器宽度比例映射到整片时长
+          const dur = isFinite(player.duration) ? player.duration : 0;
+          const target = Math.min(dur, Math.max(0,
+            startCurrent + (dx / wrap.getBoundingClientRect().width) * dur));
+          showIndicator(`${fmt(target)} / ${fmt(dur)}`);
+        } else if (direction === 'v-bright') {
+          // 上滑增亮、下滑变暗
+          const b = Math.min(BRIGHTNESS_MAX, Math.max(BRIGHTNESS_MIN,
+            startBrightness - dy / wrap.getBoundingClientRect().height));
+          player.style.filter = `brightness(${b.toFixed(2)})`;
+          showIndicator(`亮度 ${Math.round(b * 100)}%`);
+        } else {
+          // 右半屏上下滑调音量，上滑增大
+          const v = Math.min(1, Math.max(0,
+            startVolume - dy / wrap.getBoundingClientRect().height));
+          player.volume = v;
+          player.muted = false;
+          showIndicator(`音量 ${Math.round(v * 100)}%`);
+        }
+      }, { passive: false });
+
+      wrap.addEventListener('touchend', (e) => {
+        if (!moved) {
+          // 未移动 = 轻触：判定双击（三分屏），单击不拦截，保留原生控件
+          const t = e.changedTouches[0];
+          const now = Date.now();
+          const isDouble = now - lastTapAt < GESTURE_DOUBLE_MS &&
+            Math.abs(t.clientX - lastTapX) < 40;
+          lastTapAt = now;
+          lastTapX = t.clientX;
+          if (!isDouble) return;
+          lastTapAt = 0;
+          const rect = wrap.getBoundingClientRect();
+          const ratio = (t.clientX - rect.left) / rect.width;
+          if (ratio < 1 / 3) {
+            player.currentTime = Math.max(0, player.currentTime - GESTURE_SEEK_SECONDS);
+            showIndicator(`快退 ${GESTURE_SEEK_SECONDS} 秒`);
+          } else if (ratio > 2 / 3) {
+            const dur = isFinite(player.duration) ? player.duration : player.currentTime;
+            player.currentTime = Math.min(dur, player.currentTime + GESTURE_SEEK_SECONDS);
+            showIndicator(`快进 ${GESTURE_SEEK_SECONDS} 秒`);
+          } else {
+            if (player.paused) player.play(); else player.pause();
+            showIndicator(player.paused ? '已暂停' : '播放中');
+          }
+          return;
+        }
+        // 水平拖动结束才提交 seek，拖动过程只预览不跳转
+        if (direction === 'h') {
+          const touch = e.changedTouches[0];
+          const dur = isFinite(player.duration) ? player.duration : 0;
+          const target = Math.min(dur, Math.max(0,
+            startCurrent + ((touch.clientX - startX) / wrap.getBoundingClientRect().width) * dur));
+          player.currentTime = target;
+          showIndicator(`跳转 ${fmt(target)}`);
+        }
+        direction = null;
+        moved = false;
+      });
     })();
   </script>
 
