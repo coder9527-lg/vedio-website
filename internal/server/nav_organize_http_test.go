@@ -32,6 +32,7 @@ func TestIndexMoreMenu(t *testing.T) {
 		`id="nav-more-wrap"`,
 		`id="nav-more-btn"`,
 		`id="nav-dropdown"`,
+		`href="/library/storage"`,
 		`href="/stats"`,
 		`href="/history"`,
 		`href="/shares"`,
@@ -42,16 +43,23 @@ func TestIndexMoreMenu(t *testing.T) {
 	)
 }
 
-// TestIndexMoreMenuStoreOff 未启用持久化时整个 StoreOn 视图行不渲染，
-// 「更多」导航下拉也不应出现（与改造前视图行的条件渲染行为一致）。
+// TestIndexMoreMenuStoreOff 未启用持久化时「更多」下拉仍常驻（片库存储分析不依赖 SQLite），
+// 但观影统计/观看历史/分享管理三个 StoreOn 专属入口不出现，视图切换行也不渲染。
 func TestIndexMoreMenuStoreOff(t *testing.T) {
 	ts, _, _ := newSubtitleUploadServer(t)
 	code, html := getHTML(t, ts, "/")
 	if code != http.StatusOK {
 		t.Fatalf("首页状态码 = %d", code)
 	}
-	if strings.Contains(html, `id="nav-more-wrap"`) {
-		t.Error("未启用持久化时不应渲染导航「更多」下拉")
+	containsAll(t, html,
+		`id="nav-more-wrap"`,
+		`id="nav-dropdown"`,
+		`href="/library/storage"`,
+	)
+	for _, gone := range []string{`href="/stats"`, `href="/history"`, `href="/shares"`} {
+		if strings.Contains(html, gone) {
+			t.Errorf("未启用持久化时不应渲染 %s", gone)
+		}
 	}
 }
 

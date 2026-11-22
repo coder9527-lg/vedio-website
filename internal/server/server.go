@@ -115,6 +115,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /watch/{id}", s.handleWatch)
 	mux.HandleFunc("GET /shows/{id}", s.handleShowPage)
 	mux.HandleFunc("GET /stats", s.handleStats)
+	// 片库存储分析：纯内存聚合，不依赖 SQLite，未启用持久化也可访问
+	mux.HandleFunc("GET /library/storage", s.handleLibraryStorage)
 	mux.HandleFunc("GET /search", s.handleSearch)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("POST /history/clear", s.handleClearHistory)

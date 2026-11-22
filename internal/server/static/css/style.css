@@ -1093,8 +1093,17 @@ button:disabled { opacity: .6; cursor: wait; }
   color: var(--muted);
   font-size: 13px;
 }
+/* 存储分析页：分布行右侧的容量列（.dist-count 仅 32px 放不下 humanSize 文本） */
+.dist-size {
+  flex: 0 0 110px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
 @media (max-width: 600px) {
   .dist-name { flex-basis: 84px; }
+  .dist-size { flex-basis: 88px; }
 }
 
 /* 跳过片头片尾：弹窗表单布局与顶部提示条 */

@@ -10,6 +10,8 @@ import (
 
 // tmplFuncs 提供模板里使用的格式化辅助函数。
 var tmplFuncs = template.FuncMap{
+	// humanSize 把字节数格式化为人类可读大小，供片库存储分析等页面使用。
+	"humanSize": humanSize,
 	// formatDuration 把秒数格式化为 h:m:s（或 m:s），0 显示为 "-"。
 	"formatDuration": func(sec float64) string {
 		if sec <= 0 {
