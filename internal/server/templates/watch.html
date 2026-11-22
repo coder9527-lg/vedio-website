@@ -120,6 +120,9 @@
         <button type="button" id="kbd-help-btn" class="track-btn"
                 aria-haspopup="dialog" aria-expanded="false">快捷键 ?</button>
       </div>
+      <div class="track-menu" id="ts-link-menu-wrap">
+        <button type="button" id="timestamp-link-btn" class="track-btn">🔗 时间点</button>
+      </div>
     </div>
 
     <!-- 快捷键说明面板：复用刮削弹窗骨架，? 键与按钮双入口，Esc/✕/遮罩关闭 -->
@@ -735,6 +738,81 @@
   </script>
   {{end}}
 
+  <!-- 时间点分享链接：解析 ?t= 秒数并在元数据就绪后跳转；按钮复制“当前播放位置”链接。
+       本段必须先于下方 StoreOn 进度段执行，window.__urlSeek 供 resume() 做优先级守卫。 -->
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const linkBtn = document.getElementById('timestamp-link-btn');
+      const toast = document.getElementById('shot-toast');
+      if (!player || !linkBtn || !toast) return;
+
+      // 轻量 toast：与截图段同元素，独立定时器互不干扰
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.hidden = false;
+        clearTimeout(showToast._t);
+        showToast._t = setTimeout(() => { toast.hidden = true; }, 2600);
+      }
+      // 秒 → mm:ss（不足 1 小时不显示小时，提示文案用）
+      function formatClock(sec) {
+        const total = Math.max(0, Math.floor(sec || 0));
+        const h = Math.floor(total / 3600);
+        const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+        const s = String(total % 60).padStart(2, '0');
+        return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+      }
+
+      // ---- 解析 ?t=：仅接受有限非负数字；非法值不写标记，页面行为与现状一致 ----
+      const rawT = new URLSearchParams(location.search).get('t');
+      if (rawT !== null) {
+        const t = Number(rawT);
+        if (isFinite(t) && t >= 0) {
+          window.__urlSeek = t;
+          const doSeek = () => {
+            if (window.__urlSeekDone) return;
+            window.__urlSeekDone = true;
+            player.currentTime = t;
+            showToast('已跳转到 ' + formatClock(t));
+          };
+          if (player.readyState >= 1) doSeek();
+          else player.addEventListener('loadedmetadata', doSeek, { once: true });
+        }
+      }
+
+      // ---- 复制当前时间点链接（只保留 t 参数，丢弃 playlist 等上下文）----
+      linkBtn.addEventListener('click', async () => {
+        if (!isFinite(player.currentTime)) {
+          showToast('视频尚未就绪，无法生成时间点链接');
+          return;
+        }
+        const sec = Math.floor(player.currentTime);
+        const url = `${location.origin}${location.pathname}?t=${sec}`;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            // 安全上下文（https/localhost）走异步剪贴板 API
+            await navigator.clipboard.writeText(url);
+          } else {
+            // 明文 HTTP 访问 NAS 时 clipboard API 不可用，退回 execCommand 兜底
+            const input = document.createElement('input');
+            input.value = url;
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            const ok = document.execCommand('copy');
+            input.remove();
+            if (!ok) throw new Error('execCommand copy failed');
+          }
+          showToast('已复制时间点链接 · ' + formatClock(sec));
+        } catch (err) {
+          console.warn('复制时间点链接失败', err, url);
+          showToast('复制失败，请手动复制地址栏链接');
+        }
+      });
+    })();
+  </script>
+
   {{if .StoreOn}}
   <script>
     (() => {
@@ -784,6 +862,9 @@
       async function resume() {
         if (resumeDone) return;
         resumeDone = true;
+        // URL 带合法 ?t= 时显式时间点优先：不发 progress 请求、不续播，
+        // 跳转由时间点脚本段负责；后台已存进度不受影响，下次无参数打开仍续播
+        if (window.__urlSeek != null) return;
         try {
           const res = await fetch('/api/v1/videos/' + videoId + '/progress');
           if (res.status === 401) { location.href = '/login'; return; }
