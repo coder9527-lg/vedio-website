@@ -123,6 +123,13 @@
       <div class="track-menu" id="ts-link-menu-wrap">
         <button type="button" id="timestamp-link-btn" class="track-btn">🔗 时间点</button>
       </div>
+      <div class="track-menu" id="sleep-menu-wrap">
+        <button type="button" id="sleep-menu-btn" class="track-btn"
+                aria-haspopup="true" aria-expanded="false">
+          睡眠定时 <span class="caret">▾</span>
+        </button>
+        <div class="track-dropdown" id="sleep-dropdown" role="menu"></div>
+      </div>
     </div>
 
     <!-- 快捷键说明面板：复用刮削弹窗骨架，? 键与按钮双入口，Esc/✕/遮罩关闭 -->
@@ -808,6 +815,107 @@
         } catch (err) {
           console.warn('复制时间点链接失败', err, url);
           showToast('复制失败，请手动复制地址栏链接');
+        }
+      });
+    })();
+  </script>
+
+  <!-- 睡眠定时器：固定三档墙钟倒计时，到点仅暂停（复用 pause 事件链保存进度）。
+       会话级状态不持久化，刷新/关闭页面即失效，避免遗忘的定时跨天生效。 -->
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const menuBtn = document.getElementById('sleep-menu-btn');
+      const dropdown = document.getElementById('sleep-dropdown');
+      const toast = document.getElementById('shot-toast');
+      if (!player || !menuBtn || !dropdown || !toast) return;
+
+      const BASE_LABEL = '睡眠定时 ';
+      // 固定三档：分钟数 → 菜单文案；0 表示关闭
+      const OPTIONS = [
+        { minutes: 0, label: '关闭' },
+        { minutes: 15, label: '15 分钟' },
+        { minutes: 30, label: '30 分钟' },
+        { minutes: 60, label: '60 分钟' },
+      ];
+
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.hidden = false;
+        clearTimeout(showToast._t);
+        showToast._t = setTimeout(() => { toast.hidden = true; }, 2600);
+      }
+      // 剩余秒 → mm:ss（不足 1 小时不显示小时，按钮空间有限）
+      function formatRemain(sec) {
+        const total = Math.max(0, Math.ceil(sec));
+        const h = Math.floor(total / 3600);
+        const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+        const s = String(total % 60).padStart(2, '0');
+        return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+      }
+
+      // deadline 为墙钟到期时间戳（ms），null 表示未启用；tickTimer 为 1s 轮询句柄
+      let deadline = null;
+      let tickTimer = null;
+
+      function resetUI() {
+        deadline = null;
+        if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+        menuBtn.innerHTML = BASE_LABEL + '<span class="caret">▾</span>';
+        dropdown.querySelectorAll('.track-item').forEach((el) => el.classList.remove('current'));
+      }
+
+      function fire() {
+        // 到点语义与当前播放态无关：本就暂停也复位并提示，但不重复调用 pause
+        if (!player.paused) player.pause();
+        resetUI();
+        showToast('睡眠定时到点，已暂停播放');
+      }
+
+      function start(minutes) {
+        resetUI();
+        if (minutes <= 0) return; // 选择“关闭”
+        deadline = Date.now() + minutes * 60000;
+        dropdown.querySelectorAll('.track-item').forEach((el) => {
+          if (Number(el.dataset.minutes) === minutes) el.classList.add('current');
+        });
+        const tick = () => {
+          const remainSec = (deadline - Date.now()) / 1000;
+          if (remainSec <= 0) {
+            fire();
+            return;
+          }
+          menuBtn.textContent = '睡眠 ' + formatRemain(remainSec);
+        };
+        tick();
+        tickTimer = setInterval(tick, 1000);
+      }
+
+      // 动态构建菜单项（复用 .track-item/.current 样式，零新 CSS）
+      OPTIONS.forEach((opt) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'track-item';
+        item.textContent = opt.label;
+        item.dataset.minutes = String(opt.minutes);
+        item.addEventListener('click', () => {
+          start(opt.minutes);
+          dropdown.classList.remove('open');
+          menuBtn.setAttribute('aria-expanded', 'false');
+        });
+        dropdown.appendChild(item);
+      });
+
+      // 自包含下拉开关（与其他菜单段同款行为，避免跨段引用局部函数）
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+        menuBtn.setAttribute('aria-expanded', dropdown.classList.contains('open'));
+      });
+      document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target)) {
+          dropdown.classList.remove('open');
+          menuBtn.setAttribute('aria-expanded', 'false');
         }
       });
     })();
