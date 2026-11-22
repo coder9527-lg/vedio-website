@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /search", s.handleSearch)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("POST /history/clear", s.handleClearHistory)
+	mux.HandleFunc("POST /history/event/delete", s.handleDeleteEvent)
 	mux.HandleFunc("GET /api/v1/shows", s.handleAPIListShows)
 	mux.HandleFunc("GET /api/v1/shows/{id}", s.handleAPIGetShow)
 	mux.HandleFunc("GET /api/v1/videos", s.handleAPIList)

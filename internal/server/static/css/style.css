@@ -959,6 +959,39 @@ button:disabled { opacity: .6; cursor: wait; }
   .shelf-card { flex-basis: 200px; }
 }
 
+/* 历史页：单条删除角标。包裹层接管 shelf-card 在横滑行中的宽度与定位 */
+.history-card-wrap {
+  position: relative;
+  flex: 0 0 240px;
+  scroll-snap-align: start;
+}
+.history-card-wrap .shelf-card {
+  display: block;
+  height: 100%;
+}
+.history-del-form {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  margin: 0;
+  z-index: 2;
+}
+.history-del-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(8, 15, 30, .7);
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  backdrop-filter: blur(4px);
+}
+.history-del-btn:hover { color: #fca5a5; background: rgba(127, 29, 29, .8); }
+@media (max-width: 600px) {
+  .history-card-wrap { flex-basis: 200px; }
+}
+
 /* ---- 观影统计页 ---- */
 .stats-heading { margin: 16px 0 4px; }
 .stats-grid {

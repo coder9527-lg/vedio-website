@@ -432,3 +432,52 @@ func TestWatchEventLifecycle(t *testing.T) {
 		t.Errorf("清空后期望 0 条，实际 %d", len(events))
 	}
 }
+
+// TestDeleteWatchEvent 验证按主键删除单次会话：只动 watch_events、不碰 progress。
+func TestDeleteWatchEvent(t *testing.T) {
+	st := openTestStore(t)
+	base := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
+
+	id1, err := st.StartWatchEvent("vid-a", base)
+	if err != nil {
+		t.Fatalf("StartWatchEvent id1 失败: %v", err)
+	}
+	id2, err := st.StartWatchEvent("vid-a", base.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("StartWatchEvent id2 失败: %v", err)
+	}
+	// 同视频写一条续播进度，用于证明删会话不级联清理 progress
+	if err := st.SaveProgress("vid-a", ProgressUpdate{Position: 42, Duration: 100}); err != nil {
+		t.Fatalf("SaveProgress 失败: %v", err)
+	}
+
+	// 删除其中一条会话，另一条必须保留
+	if err := st.DeleteWatchEvent(id1); err != nil {
+		t.Fatalf("DeleteWatchEvent 失败: %v", err)
+	}
+	events, err := st.ListWatchEvents(0)
+	if err != nil {
+		t.Fatalf("ListWatchEvents 失败: %v", err)
+	}
+	if len(events) != 1 || events[0].ID != id2 {
+		t.Fatalf("删除后期望仅剩 id2=%d，实际 %+v", id2, events)
+	}
+
+	// 续播进度不受影响
+	if p, err := st.GetProgress("vid-a"); err != nil || p == nil || p.Position != 42 {
+		t.Errorf("删除会话不应影响 progress，得到 %+v, err=%v", p, err)
+	}
+
+	// 删除不存在的 id（影响 0 行）不报错
+	if err := st.DeleteWatchEvent(999999); err != nil {
+		t.Errorf("删除不存在的 id 不应报错，得到 %v", err)
+	}
+
+	// 非法 id 必须报错
+	if err := st.DeleteWatchEvent(0); err == nil {
+		t.Error("id=0 应返回错误")
+	}
+	if err := st.DeleteWatchEvent(-1); err == nil {
+		t.Error("负数 id 应返回错误")
+	}
+}

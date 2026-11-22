@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/coder9527-lg/vedio-website/internal/media"
@@ -96,6 +97,24 @@ func (s *Server) handleClearHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.ClearWatchEvents(); err != nil {
 		http.Error(w, "清空观看历史失败", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/history", http.StatusSeeOther)
+}
+
+// handleDeleteEvent 删除单次播放会话（按 watch_events 主键），只动会话流水、
+// 不影响 progress 续播进度。表单 POST + PRG：成功后 303 跳回历史页。
+func (s *Server) handleDeleteEvent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireStore(w) {
+		return
+	}
+	id, err := strconv.ParseInt(r.PostFormValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "无效的记录 id", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.DeleteWatchEvent(id); err != nil {
+		http.Error(w, "删除观看记录失败", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/history", http.StatusSeeOther)

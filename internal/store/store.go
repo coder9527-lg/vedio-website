@@ -448,6 +448,16 @@ func (s *Store) ClearWatchEvents() error {
 	return err
 }
 
+// DeleteWatchEvent 按主键删除单次播放会话；只动 watch_events，不影响 progress 续播进度。
+// id 非法（<=0）返回错误；id 不存在（影响 0 行）不报错，与 UpdateWatchEvent 的容忍策略一致。
+func (s *Store) DeleteWatchEvent(id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("事件 id 必须为正数")
+	}
+	_, err := s.db.Exec(`DELETE FROM watch_events WHERE id = ?`, id)
+	return err
+}
+
 // ---------- 收藏 ----------
 
 // SetFavorite 收藏(true)或取消收藏(false)一个视频。

@@ -47,29 +47,37 @@
       <div class="shelf-row">
         {{range .Items}}
         {{$v := .Video}}
-        <a class="shelf-card" href="/watch/{{$v.ID}}">
-          <div class="thumb-wrap">
-            {{if and .Metadata .Metadata.PosterPath}}
-            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
-            {{else}}
-            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
-            {{end}}
-            <span class="ext-badge">{{$v.Ext}}</span>
-            {{if hasProgress .Progress.Position .Progress.Duration}}
-            <div class="progress-bar" title="已看到 {{formatDuration .Progress.Position}} / {{formatDuration .Progress.Duration}}">
-              <div class="progress-fill" style="width: {{progressPercent .Progress.Position .Progress.Duration}}%"></div>
+        <div class="history-card-wrap">
+          <a class="shelf-card" href="/watch/{{$v.ID}}">
+            <div class="thumb-wrap">
+              {{if and .Metadata .Metadata.PosterPath}}
+              <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+              {{else}}
+              <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+              {{end}}
+              <span class="ext-badge">{{$v.Ext}}</span>
+              {{if hasProgress .Progress.Position .Progress.Duration}}
+              <div class="progress-bar" title="已看到 {{formatDuration .Progress.Position}} / {{formatDuration .Progress.Duration}}">
+                <div class="progress-fill" style="width: {{progressPercent .Progress.Position .Progress.Duration}}%"></div>
+              </div>
+              {{end}}
             </div>
-            {{end}}
-          </div>
-          <div class="meta">
-            {{if and .Metadata .Metadata.Title}}
-            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
-            {{else}}
-            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
-            {{end}}
-            <p class="resume-hint">本次观看 {{formatWatchHours .Event.WatchSeconds}}</p>
-          </div>
-        </a>
+            <div class="meta">
+              {{if and .Metadata .Metadata.Title}}
+              <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
+              {{else}}
+              <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+              {{end}}
+              <p class="resume-hint">本次观看 {{formatWatchHours .Event.WatchSeconds}}</p>
+            </div>
+          </a>
+          <form class="history-del-form" method="post" action="/history/event/delete"
+                onsubmit="return confirm('确定删除这条观看记录吗？不影响续播进度。');">
+            <input type="hidden" name="id" value="{{.Event.ID}}">
+            <button type="submit" class="history-del-btn"
+                    aria-label="删除这条观看记录" title="删除这条记录">✕</button>
+          </form>
+        </div>
         {{end}}
       </div>
     </section>
