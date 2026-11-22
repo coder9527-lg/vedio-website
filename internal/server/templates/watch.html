@@ -113,6 +113,9 @@
       <div class="track-menu" id="shot-menu-wrap">
         <button type="button" id="screenshot-btn" class="track-btn">📷 截图</button>
       </div>
+      <div class="track-menu" id="pip-menu-wrap" hidden>
+        <button type="button" id="pip-btn" class="track-btn" aria-pressed="false">画中画</button>
+      </div>
     </div>
     <div class="player-wrap">
       {{if .StoreOn}}
@@ -1593,6 +1596,44 @@
         } catch (err) {
           // 画布被跨域污染等异常：同源流 + crossorigin 下理论上不会发生，保留兜底
           showToast('截图失败：' + (err && err.message ? err.message : '未知错误'));
+        }
+      });
+    })();
+  </script>
+
+  <!-- 画中画：不支持的浏览器保持按钮隐藏，进入/退出由系统事件同步文案（原画与转码通用） -->
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const wrap = document.getElementById('pip-menu-wrap');
+      const btn = document.getElementById('pip-btn');
+      const toast = document.getElementById('shot-toast');
+      if (!player || !wrap || !btn || !toast) return;
+      // 能力检测：旧浏览器/iOS 不支持时按钮整体不显示，避免点击报错
+      if (!document.pictureInPictureEnabled) return;
+      wrap.hidden = false;
+
+      function setActive(active) {
+        btn.textContent = active ? '退出画中画' : '画中画';
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      }
+      // 以系统事件为准：用户直接关闭小窗也能复位按钮状态
+      player.addEventListener('enterpictureinpicture', () => setActive(true));
+      player.addEventListener('leavepictureinpicture', () => setActive(false));
+
+      btn.addEventListener('click', async () => {
+        try {
+          if (document.pictureInPictureElement === player) {
+            await document.exitPictureInPicture();
+          } else {
+            await player.requestPictureInPicture();
+          }
+        } catch (err) {
+          // 用户拒绝、视频未就绪等：浏览器错误信息多为英文且不稳定，统一中文提示
+          toast.textContent = '画中画开启失败';
+          toast.hidden = false;
+          clearTimeout(btn._pipToastTimer);
+          btn._pipToastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
         }
       });
     })();
