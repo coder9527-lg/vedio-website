@@ -116,6 +116,36 @@
       <div class="track-menu" id="pip-menu-wrap" hidden>
         <button type="button" id="pip-btn" class="track-btn" aria-pressed="false">画中画</button>
       </div>
+      <div class="track-menu" id="kbd-menu-wrap">
+        <button type="button" id="kbd-help-btn" class="track-btn"
+                aria-haspopup="dialog" aria-expanded="false">快捷键 ?</button>
+      </div>
+    </div>
+
+    <!-- 快捷键说明面板：复用刮削弹窗骨架，? 键与按钮双入口，Esc/✕/遮罩关闭 -->
+    <div id="kbd-modal" class="scrape-modal" hidden>
+      <div class="scrape-dialog" role="dialog" aria-modal="true" aria-labelledby="kbd-dialog-title">
+        <div class="scrape-dialog-head">
+          <h3 id="kbd-dialog-title">键盘快捷键</h3>
+          <button type="button" id="kbd-close" class="scrape-close" aria-label="关闭">✕</button>
+        </div>
+        <div class="scrape-body">
+          <table class="kbd-table">
+            <tbody>
+              <tr><td><kbd>空格</kbd> / <kbd>K</kbd></td><td>播放 / 暂停</td></tr>
+              <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>后退 / 前进 5 秒</td></tr>
+              <tr><td><kbd>J</kbd> / <kbd>L</kbd></td><td>后退 / 前进 10 秒</td></tr>
+              <tr><td><kbd>,</kbd> / <kbd>.</kbd></td><td>逐帧后退 / 前进</td></tr>
+              <tr><td><kbd>0</kbd> - <kbd>9</kbd></td><td>按百分比跳转（0 回片头，1=10%…9=90%）</td></tr>
+              <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>音量加 / 减</td></tr>
+              <tr><td><kbd>M</kbd></td><td>静音切换</td></tr>
+              <tr><td><kbd>F</kbd></td><td>全屏切换</td></tr>
+              <tr><td><kbd>?</kbd></td><td>打开 / 关闭本面板</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>关闭本面板（不影响全屏退出）</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
     <div class="player-wrap">
       {{if .StoreOn}}
@@ -1767,6 +1797,26 @@
         showPrefToast('已恢复默认播放偏好');
       });
 
+      // ---- 快捷键说明面板（按钮 + ? 键双入口，Esc/✕/遮罩关闭） ----
+      const kbdBtn = document.getElementById('kbd-help-btn');
+      const kbdModal = document.getElementById('kbd-modal');
+      const kbdClose = document.getElementById('kbd-close');
+      function setKbdOpen(open) {
+        if (!kbdModal || !kbdBtn) return;
+        kbdModal.hidden = !open;
+        kbdBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open && kbdClose) kbdClose.focus();
+        else kbdBtn.focus();
+      }
+      if (kbdBtn && kbdModal) {
+        kbdBtn.addEventListener('click', () => setKbdOpen(kbdModal.hidden));
+        if (kbdClose) kbdClose.addEventListener('click', () => setKbdOpen(false));
+        // 点遮罩自身（弹窗外部）关闭，点 dialog 内部不处理
+        kbdModal.addEventListener('click', (e) => {
+          if (e.target === kbdModal) setKbdOpen(false);
+        });
+      }
+
       // ---- 键盘快捷键 ----
       // 守卫：输入控件聚焦、弹窗打开时不拦截，交给页面原有行为；
       // 焦点就在 video 上时也交给浏览器原生控件，避免双触发。
@@ -1778,6 +1828,8 @@
       }
       document.addEventListener('keydown', (e) => {
         if (shouldIgnore(e)) return;
+        // 面板打开时：Esc 只关面板；? 在输入焦点外可切换，其余按键照常
+        const kbdOpen = kbdModal && !kbdModal.hidden;
         switch (e.key) {
           case ' ':
           case 'k':
@@ -1811,6 +1863,45 @@
           case 'M':
             e.preventDefault();
             player.muted = !player.muted;
+            break;
+          // 长跳转：J/L 各 10 秒，边界钳制与方向键同口径
+          case 'j':
+          case 'J':
+            e.preventDefault();
+            player.currentTime = Math.max(0, player.currentTime - 10);
+            break;
+          case 'l':
+          case 'L':
+            e.preventDefault();
+            player.currentTime = Math.min(player.duration || Infinity, player.currentTime + 10);
+            break;
+          // 逐帧：手动按 1/30 秒 seek，不依赖非标准的 seekToNextFrame
+          case ',':
+            e.preventDefault();
+            player.currentTime = Math.max(0, player.currentTime - 1 / 30);
+            break;
+          case '.':
+            e.preventDefault();
+            player.currentTime = Math.min(player.duration || Infinity, player.currentTime + 1 / 30);
+            break;
+          // 百分比跳转：0 回片头，1..9 跳到 10%..90%；时长未知时忽略
+          case '0': case '1': case '2': case '3': case '4':
+          case '5': case '6': case '7': case '8': case '9':
+            if (player.duration && isFinite(player.duration)) {
+              e.preventDefault();
+              player.currentTime = player.duration * (Number(e.key) / 10);
+            }
+            break;
+          case '?':
+            e.preventDefault();
+            setKbdOpen(!kbdOpen);
+            break;
+          case 'Escape':
+            // 仅面板打开时拦截，避免影响全屏等原生 Esc 行为
+            if (kbdOpen) {
+              e.preventDefault();
+              setKbdOpen(false);
+            }
             break;
           default:
             break;
