@@ -1418,3 +1418,22 @@ a.share-mgr-name:hover { color: var(--accent); }
   .nav-more { position: static; }
   .nav-dropdown { left: 8px; right: 8px; min-width: 0; }
 }
+
+/* 目录浏览：面包屑与行首图标，行结构复用 .dist-* */
+.browse-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 20px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.browse-crumbs a { color: var(--accent); text-decoration: none; }
+.browse-crumbs a:hover { text-decoration: underline; }
+.browse-crumbs [aria-current="page"] { color: var(--text); font-weight: 600; }
+.browse-icon {
+  flex: 0 0 24px;
+  text-align: center;
+  white-space: nowrap;
+}

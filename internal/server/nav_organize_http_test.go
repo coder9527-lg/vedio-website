@@ -33,6 +33,7 @@ func TestIndexMoreMenu(t *testing.T) {
 		`id="nav-more-btn"`,
 		`id="nav-dropdown"`,
 		`href="/library/storage"`,
+		`href="/browse"`,
 		`href="/stats"`,
 		`href="/history"`,
 		`href="/shares"`,
@@ -55,6 +56,7 @@ func TestIndexMoreMenuStoreOff(t *testing.T) {
 		`id="nav-more-wrap"`,
 		`id="nav-dropdown"`,
 		`href="/library/storage"`,
+		`href="/browse"`,
 	)
 	for _, gone := range []string{`href="/stats"`, `href="/history"`, `href="/shares"`} {
 		if strings.Contains(html, gone) {

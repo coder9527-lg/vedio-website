@@ -117,6 +117,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /stats", s.handleStats)
 	// 片库存储分析：纯内存聚合，不依赖 SQLite，未启用持久化也可访问
 	mux.HandleFunc("GET /library/storage", s.handleLibraryStorage)
+	// 目录浏览：通配模式不匹配无尾斜杠的裸路径，根入口与子路径需分别注册
+	mux.HandleFunc("GET /browse", s.handleBrowse)
+	mux.HandleFunc("GET /browse/{rest...}", s.handleBrowse)
 	mux.HandleFunc("GET /search", s.handleSearch)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("POST /history/clear", s.handleClearHistory)
