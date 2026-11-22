@@ -138,6 +138,8 @@ func (s *Server) Handler() http.Handler {
 
 	// 播放进度与收藏（仅在启用持久化时可用，否则返回 503）
 	mux.HandleFunc("GET /api/v1/progress", s.handleProgressList)
+	// 观影数据 CSV 全量导出（仅启用持久化时可用，否则 503）
+	mux.HandleFunc("GET /api/v1/export/progress.csv", s.handleExportProgress)
 	mux.HandleFunc("PUT /api/v1/videos/{id}/progress", s.handleProgressPut)
 	mux.HandleFunc("GET /api/v1/videos/{id}/progress", s.handleProgressGet)
 	mux.HandleFunc("DELETE /api/v1/videos/{id}/progress", s.handleProgressDelete)

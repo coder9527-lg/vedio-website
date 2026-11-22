@@ -47,6 +47,8 @@ func TestStatsPageRenders(t *testing.T) {
 		"收藏数",
 		"最近观看",
 		"✓ 已看完",
+		"导出观影数据",
+		"/api/v1/export/progress.csv",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("统计页缺少 %q", want)
@@ -95,6 +97,9 @@ func TestStatsPageEmptyWhenStoreDisabled(t *testing.T) {
 	}
 	if strings.Contains(body, "stat-card") {
 		t.Fatal("无 DB 时不应渲染统计卡片")
+	}
+	if strings.Contains(body, "export-csv-btn") {
+		t.Fatal("无 DB 空态不应渲染 CSV 导出入口")
 	}
 }
 

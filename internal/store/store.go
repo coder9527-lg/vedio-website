@@ -309,6 +309,27 @@ func (s *Store) RecentProgress(limit int) ([]Progress, error) {
 	return out, rows.Err()
 }
 
+// AllProgress 返回全部进度记录（按更新时间倒序、无 LIMIT），仅供 CSV 全量导出使用。
+// 与 RecentProgress 的差异仅在于不分页，保证备份场景下数据一条不丢。
+func (s *Store) AllProgress() ([]Progress, error) {
+	rows, err := s.db.Query(
+		`SELECT ` + progressColumns + ` FROM progress ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Progress
+	for rows.Next() {
+		p, err := scanProgress(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // CompletedProgress 返回已看完（completed=1）的进度记录（按更新时间倒序），limit <= 0 时默认 20。
 func (s *Store) CompletedProgress(limit int) ([]Progress, error) {
 	if limit <= 0 {
