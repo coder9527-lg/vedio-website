@@ -166,6 +166,62 @@ func TestReviewDanglingEventExcluded(t *testing.T) {
 	}
 }
 
+// TestReviewCheckinSameDayAggregated 同一天两条会话各 5 分钟，单条不足阈值但合计 10 分钟应打卡（heat-lv1）。
+func TestReviewCheckinSameDayAggregated(t *testing.T) {
+	useShanghaiLocal(t)
+	srv, ts, id := newPersistTestServer(t)
+	// 用本地时区构造，保证归并到的自然日与断言日期一致，不受测试机器时区影响
+	base := time.Date(2026, 5, 20, 17, 0, 0, 0, time.Local)
+	addReviewEvent(t, srv, id, base, 300)
+	addReviewEvent(t, srv, id, base.Add(3*time.Hour), 300)
+
+	_, body := getHTML(t, ts, "/review?year=2026")
+	containsAll(t, body,
+		"观影打卡",
+		"单日累计满 10 分钟算打卡",
+		"heat-grid",
+		"heat-legend",
+		`title="2026-05-20：观看 10 分钟"`,
+	)
+	// 图例固定各占 1 次 lv1-lv4；合计 600 秒的真实格再贡献 1 次 lv1，故 lv1 出现 2 次，
+	// lv2-lv4 仍只在图例中出现 1 次
+	if got := strings.Count(body, "heat-lv1"); got != 2 {
+		t.Fatalf("同日累计满 10 分钟应渲染 1 个 heat-lv1 真实格（图例之外），实际 heat-lv1 出现 %d 次", got)
+	}
+	for _, lv := range []string{"heat-lv2", "heat-lv3", "heat-lv4"} {
+		if got := strings.Count(body, lv); got != 1 {
+			t.Fatalf("%s 应只在图例出现 1 次，实际 %d 次", lv, got)
+		}
+	}
+	if !strings.Contains(body, "heat-month") {
+		t.Fatal("应渲染月份标签")
+	}
+}
+
+// TestReviewCheckinBelowThreshold 单条 5 分钟不足打卡阈值：真实格停在 heat-lv0，高档色阶只出现在图例。
+func TestReviewCheckinBelowThreshold(t *testing.T) {
+	useShanghaiLocal(t)
+	srv, ts, id := newPersistTestServer(t)
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.Local)
+	addReviewEvent(t, srv, id, base, 300)
+
+	_, body := getHTML(t, ts, "/review?year=2026")
+	containsAll(t, body,
+		"观影打卡",
+		"最长连续",
+		`title="2026-07-08：观看 5 分钟"`,
+	)
+	// lv1-lv4 各只应在图例中出现 1 次，真实日格全部为 lv0
+	for _, lv := range []string{"heat-lv1", "heat-lv2", "heat-lv3", "heat-lv4"} {
+		if got := strings.Count(body, lv); got != 1 {
+			t.Fatalf("不足阈值时 %s 应只在图例出现 1 次，实际 %d 次", lv, got)
+		}
+	}
+	if !strings.Contains(body, "打卡天数") {
+		t.Fatal("应渲染打卡天数卡片")
+	}
+}
+
 // TestReviewDistinctAndSessions 同一视频两条会话：去重 1 部、会话 2 次、秒数累加。
 func TestReviewDistinctAndSessions(t *testing.T) {
 	srv, ts, id := newPersistTestServer(t)

@@ -18,6 +18,25 @@ const reviewTopN = 10
 // reviewMinYear 是年份参数的下限，早于该值视为非法输入回退当前年。
 const reviewMinYear = 1900
 
+// reviewCheckinSeconds 是单日打卡阈值：当天累计观看满 10 分钟（600 秒）算打卡成功。
+const reviewCheckinSeconds = 600
+
+// heatCell 是年度热力图中的一个日格（含行列补齐用的占位格）。
+type heatCell struct {
+	Date     string  // "2006-01-02"，占位格为空，供 title 与测试断言
+	Day      int     // 月内日号（1-31），占位格为 0
+	Seconds  float64 // 当天累计观看秒数
+	Level    int     // 颜色档位 0-4；不足打卡阈值与无活动均为 0
+	InMonth  bool    // false 表示年初/年末对齐周列的占位格
+	IsFuture bool    // 当前年今天之后的日期置灰，往年恒为 false
+}
+
+// heatMonthLabel 是热力图顶部的月份标签，Col 为该月 1 号所在周列（0 基）。
+type heatMonthLabel struct {
+	Label string
+	Col   int
+}
+
 // monthStat 是年度回顾中单个自然月的聚合桶。
 type monthStat struct {
 	Month    int     // 1-12
@@ -50,6 +69,13 @@ type reviewData struct {
 	Months          []monthStat // 固定 12 项
 	Genres          []distItem
 	TopVideos       []reviewTopVideo
+	// 观影打卡与年度热力图
+	CheckinDays   int              // 本年度打卡总天数
+	CurrentStreak int              // 当前连续打卡天数，仅当前年计算
+	LongestStreak int              // 本年度最长连续打卡段
+	HeatCells     []heatCell       // 列优先的日格序列（含占位），长度为 7 的倍数
+	HeatMonths    []heatMonthLabel // 月份标签（12 项）
+	HeatWeeks     int              // 周列数 = len(HeatCells)/7
 }
 
 // handleReview 渲染年度观影回顾。未启用持久化时与 /stats 一致渲染 200 空态页。
@@ -125,6 +151,8 @@ func (s *Server) aggregateYearReview(data *reviewData, events []store.WatchEvent
 
 	distinct := map[string]bool{}
 	videoSeconds := map[string]float64{}
+	// daySeconds 按本地自然日累计观看秒数，供打卡判定与热力图使用
+	daySeconds := map[string]float64{}
 	var totalSeconds float64
 	sessions := 0
 
@@ -141,6 +169,7 @@ func (s *Server) aggregateYearReview(data *reviewData, events []store.WatchEvent
 		totalSeconds += ev.WatchSeconds
 		distinct[v.ID] = true
 		videoSeconds[v.ID] += ev.WatchSeconds
+		daySeconds[local.Format("2006-01-02")] += ev.WatchSeconds
 
 		bucket := &months[int(local.Month())-1]
 		bucket.Seconds += ev.WatchSeconds
@@ -255,6 +284,125 @@ func (s *Server) aggregateYearReview(data *reviewData, events []store.WatchEvent
 	data.Months = months
 	data.Genres = genres
 	data.TopVideos = top
+
+	s.aggregateCheckin(data, daySeconds, now)
+}
+
+// checkinLevel 按当天累计秒数返回热力图色档：不足打卡阈值与无活动均为 0。
+func checkinLevel(seconds float64) int {
+	switch {
+	case seconds < reviewCheckinSeconds:
+		return 0
+	case seconds < 1800: // [10 分钟, 30 分钟)
+		return 1
+	case seconds < 3600: // [30 分钟, 1 小时)
+		return 2
+	case seconds < 7200: // [1 小时, 2 小时)
+		return 3
+	default: // 2 小时及以上
+		return 4
+	}
+}
+
+// aggregateCheckin 基于每日累计秒数计算打卡统计并生成列优先的年度热力图格子序列。
+// 库内时间已在调用方按本地时区归并，这里直接按自然日处理。
+func (s *Server) aggregateCheckin(data *reviewData, daySeconds map[string]float64, now time.Time) {
+	year := data.Year
+	jan1 := time.Date(year, 1, 1, 0, 0, 0, 0, time.Local)
+	// Go 的 Weekday 周日=0，转换为周一起点的偏移量
+	lead := (int(jan1.Weekday()) + 6) % 7
+
+	totalDays := yearDays(year)
+	capacity := lead + totalDays
+	if rem := capacity % 7; rem != 0 {
+		capacity += 7 - rem
+	}
+	cells := make([]heatCell, 0, capacity)
+
+	// 年初占位：对齐到周一所在列
+	for i := 0; i < lead; i++ {
+		cells = append(cells, heatCell{})
+	}
+
+	// 打卡集合（仅满阈值的自然日入集合），供连续天数扫描
+	checkinSet := map[string]bool{}
+	todayStr := now.Format("2006-01-02")
+	for d := 0; d < totalDays; d++ {
+		date := jan1.AddDate(0, 0, d)
+		dateStr := date.Format("2006-01-02")
+		seconds := daySeconds[dateStr]
+		level := checkinLevel(seconds)
+		if level > 0 {
+			checkinSet[dateStr] = true
+		}
+		cells = append(cells, heatCell{
+			Date:     dateStr,
+			Day:      date.Day(),
+			Seconds:  seconds,
+			Level:    level,
+			InMonth:  true,
+			IsFuture: year == now.Year() && dateStr > todayStr,
+		})
+	}
+
+	// 年末占位补齐整周
+	for len(cells)%7 != 0 {
+		cells = append(cells, heatCell{})
+	}
+
+	// 月份标签：每月 1 号所在周列 = (年初偏移 + 年序日-1) / 7
+	monthLabels := make([]heatMonthLabel, 12)
+	for m := 1; m <= 12; m++ {
+		first := time.Date(year, time.Month(m), 1, 0, 0, 0, 0, time.Local)
+		col := (lead + first.YearDay() - 1) / 7
+		monthLabels[m-1] = heatMonthLabel{Label: strconv.Itoa(m) + "月", Col: col}
+	}
+
+	// 最长连续打卡：从 1 月 1 日按自然日扫描打卡集合
+	longest, run := 0, 0
+	for d := 0; d < totalDays; d++ {
+		dateStr := jan1.AddDate(0, 0, d).Format("2006-01-02")
+		if checkinSet[dateStr] {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+
+	// 当前连续：仅当前年计算；今天尚未结束，未打卡不中断，从昨天起向前数
+	current := 0
+	if year == now.Year() {
+		cursor := now.AddDate(0, 0, -1)
+		if todayCheckin := checkinSet[todayStr]; todayCheckin {
+			current = 1
+			cursor = now // 今天已打卡则从今天起向前
+		}
+		for {
+			key := cursor.Format("2006-01-02")
+			if !checkinSet[key] {
+				break
+			}
+			if key == todayStr {
+				cursor = cursor.AddDate(0, 0, -1)
+				continue
+			}
+			current++
+			cursor = cursor.AddDate(0, 0, -1)
+			if cursor.Year() < year {
+				break
+			}
+		}
+	}
+
+	data.CheckinDays = len(checkinSet)
+	data.CurrentStreak = current
+	data.LongestStreak = longest
+	data.HeatCells = cells
+	data.HeatMonths = monthLabels
+	data.HeatWeeks = len(cells) / 7
 }
 
 // yearDays 返回某年的全年天数，闰年 366 天。

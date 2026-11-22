@@ -120,6 +120,54 @@
       </div>
     </section>
 
+    <section class="checkin-panel" aria-label="观影打卡">
+      <h2 class="shelf-title">🔥 观影打卡 <span class="hint">单日累计满 10 分钟算打卡</span></h2>
+      <div class="stats-grid checkin-grid">
+        <div class="stat-card">
+          <p class="stat-label">打卡天数</p>
+          <p class="stat-value">{{.CheckinDays}}</p>
+          <p class="stat-sub">本年度达标天数</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">当前连续</p>
+          <p class="stat-value">{{.CurrentStreak}} 天</p>
+          <p class="stat-sub">截至今天的连续打卡</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">最长连续</p>
+          <p class="stat-value">{{.LongestStreak}} 天</p>
+          <p class="stat-sub">本年度最长纪录</p>
+        </div>
+      </div>
+
+      <div class="heat-wrap">
+        <div class="heat-month-row" style="grid-template-columns: repeat({{.HeatWeeks}}, var(--heat-cell));">
+          {{range .HeatMonths}}
+          <span class="heat-month" style="grid-column: {{.Col}};">{{.Label}}</span>
+          {{end}}
+        </div>
+        <div class="heat-grid" style="grid-template-columns: repeat({{.HeatWeeks}}, var(--heat-cell));">
+          {{range .HeatCells}}
+          {{if not .InMonth}}
+          <span class="heat-cell heat-empty"></span>
+          {{else}}
+          <span class="heat-cell heat-lv{{.Level}}{{if .IsFuture}} heat-future{{end}}"
+                title="{{.Date}}：观看 {{formatWatchHours .Seconds}}"></span>
+          {{end}}
+          {{end}}
+        </div>
+      </div>
+      <div class="heat-legend" aria-hidden="true">
+        <span class="hint">少</span>
+        <span class="heat-cell heat-lv0"></span>
+        <span class="heat-cell heat-lv1"></span>
+        <span class="heat-cell heat-lv2"></span>
+        <span class="heat-cell heat-lv3"></span>
+        <span class="heat-cell heat-lv4"></span>
+        <span class="hint">多</span>
+      </div>
+    </section>
+
     <section class="dist-section" aria-label="月度观看分布">
       <h2 class="shelf-title">月度观看分布</h2>
       {{range .Months}}
