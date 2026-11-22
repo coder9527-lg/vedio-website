@@ -1116,6 +1116,51 @@
     })();
   </script>
 
+  <!-- Media Session：系统锁屏/蓝牙/媒体键显示标题与海报，接管播放暂停与上下集 -->
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      if (!player || !('mediaSession' in navigator)) return;
+
+      const session = navigator.mediaSession;
+      const MS_ALBUM = '个人视频库';
+      // 刮削标题优先、文件名兜底；handler 保证 .Metadata 始终为非 nil 结构体，可直接判字段
+      const msTitle = {{if .Metadata.Title}}{{printf "%q" .Metadata.Title}}{{else}}{{printf "%q" .Video.Name}}{{end}};
+      const msArtist = {{if .Metadata.Original}}{{printf "%q" .Metadata.Original}}{{else}}{{printf "%q" .Video.RelPath}}{{end}};
+      // artwork 与 <video poster> 同源：刮削海报优先，缩略图兜底
+      const msArtwork = {{if .Metadata.PosterPath}}{{printf "%q" (printf "/artwork/%s/poster" .Video.ID)}}{{else}}{{printf "%q" (printf "/thumb/%s" .Video.ID)}}{{end}};
+      // 连播上下文为空时输出空串，下一集/上一集动作置 null 让系统灰显
+      const msNextURL = {{if .AutoNextURL}}{{printf "%q" .AutoNextURL}}{{else}}""{{end}};
+
+      // 个别旧浏览器不支持 MediaMetadata 构造：静默跳过元数据，媒体键仍可用
+      try {
+        session.metadata = new MediaMetadata({
+          title: msTitle,
+          artist: msArtist,
+          album: MS_ALBUM,
+          artwork: [{ src: msArtwork, sizes: '512x512', type: 'image/jpeg' }]
+        });
+      } catch (err) { /* 忽略：不影响播放控制 */ }
+
+      // 播放/暂停常驻注册，与播放器双向同步
+      session.setActionHandler('play', () => { player.play(); });
+      session.setActionHandler('pause', () => { player.pause(); });
+      player.addEventListener('play', () => { session.playbackState = 'playing'; });
+      player.addEventListener('pause', () => { session.playbackState = 'paused'; });
+      session.playbackState = player.paused ? 'paused' : 'playing';
+
+      // 上下集仅在连播上下文存在时启用
+      if (msNextURL) {
+        session.setActionHandler('nexttrack', () => { location.href = msNextURL; });
+        // 浏览器历史即上一个观看页
+        session.setActionHandler('previoustrack', () => { history.back(); });
+      } else {
+        session.setActionHandler('nexttrack', null);
+        session.setActionHandler('previoustrack', null);
+      }
+    })();
+  </script>
+
   {{if .StoreOn}}
   <script>
     (() => {
