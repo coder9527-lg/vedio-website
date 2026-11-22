@@ -442,6 +442,29 @@ func (s *Store) ListWatchEvents(limit int) ([]WatchEvent, error) {
 	return out, rows.Err()
 }
 
+// AllWatchEvents 返回全部观看事件（会话流水），按会话开始时间倒序排列，不做数量截断。
+// 供年度回顾等全量聚合场景使用；空库返回非 nil 的空切片，方便调用方直接 range。
+func (s *Store) AllWatchEvents() ([]WatchEvent, error) {
+	rows, err := s.db.Query(
+		`SELECT id, video_id, started_at, updated_at, watch_seconds, position, duration
+		 FROM watch_events ORDER BY started_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]WatchEvent, 0)
+	for rows.Next() {
+		var e WatchEvent
+		if err := rows.Scan(&e.ID, &e.VideoID, &e.StartedAt, &e.UpdatedAt,
+			&e.WatchSeconds, &e.Position, &e.Duration); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ClearWatchEvents 清空全部观看历史。
 func (s *Store) ClearWatchEvents() error {
 	_, err := s.db.Exec(`DELETE FROM watch_events`)

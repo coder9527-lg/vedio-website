@@ -1437,3 +1437,74 @@ a.share-mgr-name:hover { color: var(--accent); }
   text-align: center;
   white-space: nowrap;
 }
+
+/* 年度回顾：年份切换表单与月度观看目标面板 */
+.review-year-form {
+  margin: 12px 0 20px;
+}
+.goal-panel {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 0 0 24px;
+}
+.goal-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+}
+.goal-form input {
+  width: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+.goal-form select {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+.goal-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 8px;
+}
+/* display:flex 会覆盖 [hidden] 默认隐藏，需显式兜底（与站内其他 [hidden] 规则一致） */
+.goal-row[hidden] {
+  display: none;
+}
+.goal-bar {
+  flex: 1;
+  height: 10px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.goal-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.goal-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .goal-form input { width: 100px; }
+  .goal-row { flex-direction: column; align-items: stretch; gap: 6px; }
+  .goal-text { white-space: normal; }
+}

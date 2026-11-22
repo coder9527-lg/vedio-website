@@ -433,6 +433,54 @@ func TestWatchEventLifecycle(t *testing.T) {
 	}
 }
 
+// TestAllWatchEvents 验证全量事件读取：空库返非 nil 空切片；超过 ListWatchEvents 默认上限时不截断且保持倒序。
+func TestAllWatchEvents(t *testing.T) {
+	st := openTestStore(t)
+	base := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
+
+	// 空库：必须返回非 nil 空切片，调用方可直接 range
+	empty, err := st.AllWatchEvents()
+	if err != nil {
+		t.Fatalf("空库 AllWatchEvents 失败: %v", err)
+	}
+	if empty == nil {
+		t.Fatal("空库应返回非 nil 切片")
+	}
+	if len(empty) != 0 {
+		t.Fatalf("空库应返回 0 条，实际 %d", len(empty))
+	}
+
+	// 写入 105 条会话（超过 ListWatchEvents 默认 100 的上限），开始时间逐条递增
+	const total = 105
+	for i := 0; i < total; i++ {
+		id, err := st.StartWatchEvent("vid-a", base.Add(time.Duration(i)*time.Minute))
+		if err != nil {
+			t.Fatalf("第 %d 条 StartWatchEvent 失败: %v", i, err)
+		}
+		if err := st.UpdateWatchEvent(id, float64(i+1), 0, 0, base.Add(time.Duration(i+1)*time.Minute)); err != nil {
+			t.Fatalf("第 %d 条 UpdateWatchEvent 失败: %v", i, err)
+		}
+	}
+
+	events, err := st.AllWatchEvents()
+	if err != nil {
+		t.Fatalf("AllWatchEvents 失败: %v", err)
+	}
+	if len(events) != total {
+		t.Fatalf("期望全量 %d 条无截断，实际 %d", total, len(events))
+	}
+	// 倒序：首条应为最后写入（开始时间最晚）的会话
+	if !events[0].StartedAt.Equal(base.Add((total - 1) * time.Minute)) {
+		t.Errorf("首条开始时间错误: %v", events[0].StartedAt)
+	}
+	// 逐条校验整体严格倒序
+	for i := 1; i < len(events); i++ {
+		if events[i-1].StartedAt.Before(events[i].StartedAt) {
+			t.Fatalf("第 %d 条排序错误，未按 started_at 倒序", i)
+		}
+	}
+}
+
 // TestDeleteWatchEvent 验证按主键删除单次会话：只动 watch_events、不碰 progress。
 func TestDeleteWatchEvent(t *testing.T) {
 	st := openTestStore(t)

@@ -35,6 +35,7 @@ func TestIndexMoreMenu(t *testing.T) {
 		`href="/library/storage"`,
 		`href="/browse"`,
 		`href="/stats"`,
+		`href="/review"`,
 		`href="/history"`,
 		`href="/shares"`,
 		// 常用视图入口保留在同级 tab（URL 由 indexURL 模板函数生成，按文案断言）
@@ -58,7 +59,7 @@ func TestIndexMoreMenuStoreOff(t *testing.T) {
 		`href="/library/storage"`,
 		`href="/browse"`,
 	)
-	for _, gone := range []string{`href="/stats"`, `href="/history"`, `href="/shares"`} {
+	for _, gone := range []string{`href="/stats"`, `href="/review"`, `href="/history"`, `href="/shares"`} {
 		if strings.Contains(html, gone) {
 			t.Errorf("未启用持久化时不应渲染 %s", gone)
 		}

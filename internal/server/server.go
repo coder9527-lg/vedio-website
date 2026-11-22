@@ -122,6 +122,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /browse/{rest...}", s.handleBrowse)
 	mux.HandleFunc("GET /search", s.handleSearch)
 	mux.HandleFunc("GET /history", s.handleHistory)
+	mux.HandleFunc("GET /review", s.handleReview)
 	mux.HandleFunc("POST /history/clear", s.handleClearHistory)
 	mux.HandleFunc("POST /history/event/delete", s.handleDeleteEvent)
 	// 分享管理中心：全量列表、单条撤销、清理过期（受鉴权链保护）
