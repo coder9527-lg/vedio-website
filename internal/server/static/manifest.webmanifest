@@ -1,0 +1,19 @@
+{
+  "name": "个人视频库",
+  "short_name": "视频库",
+  "description": "个人 NAS 视频库，可安装到主屏使用",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

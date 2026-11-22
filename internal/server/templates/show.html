@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{.Show.Title}}</title>
   <link rel="stylesheet" href="/static/css/style.css">
+  <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
 </head>
 <body>
   <header class="site-header">

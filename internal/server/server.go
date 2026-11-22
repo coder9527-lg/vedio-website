@@ -197,6 +197,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /login", s.handleLogin)
 	mux.HandleFunc("POST /logout", s.handleLogout)
 
+	// Service Worker 根路径挂载：突破 /static/ 默认作用域，管控整站
+	mux.HandleFunc("GET /sw.js", s.handleServiceWorker)
+
 	staticFS, err := fs.Sub(assets, "static")
 	if err != nil {
 		log.Fatalf("加载静态资源失败: %v", err)
