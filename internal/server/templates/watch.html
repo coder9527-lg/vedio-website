@@ -107,6 +107,9 @@
         <button type="button" id="bm-add-btn" class="track-btn">＋书签</button>
       </div>
       {{end}}
+      <div class="track-menu" id="pref-menu-wrap">
+        <button type="button" id="pref-reset-btn" class="track-btn">重置偏好</button>
+      </div>
     </div>
     <div class="player-wrap">
       {{if .StoreOn}}
@@ -531,6 +534,7 @@
       }
       function select(label, btnEl) {
         currentLabel = label;
+        window.PlayerPrefs.save({ subLabel: label }); // null=用户明确关闭字幕
         tracks().forEach((t) => { t.mode = (t.label === label) ? 'showing' : 'disabled'; });
         dropdown.querySelectorAll('.track-item').forEach(el => el.classList.remove('current'));
         if (btnEl) btnEl.classList.add('current');
@@ -539,6 +543,13 @@
         tracks().forEach((t) => {
           t.mode = (t.label === currentLabel) ? 'showing' : 'disabled';
         });
+      }
+      // 按全局偏好匹配当前可用轨道：命中则切换 currentLabel，未命中保持现状且不覆盖存储
+      function applyPrefLabel() {
+        const pref = window.PlayerPrefs.getSubLabel();
+        if (pref === undefined) return;            // 从未设置：维持 <track default> 逻辑
+        if (pref === null) { currentLabel = null; return; } // 用户明确关闭
+        if (tracks().some((t) => t.label === pref)) currentLabel = pref;
       }
       // 已注入过的内嵌轨道 label，避免重复添加
       const injected = new Set();
@@ -558,6 +569,7 @@
           player.appendChild(el);
           if (s.default && currentLabel === null) currentLabel = label;
         });
+        applyPrefLabel(); // 内嵌轨道注入后按全局偏好重新匹配（命中才覆盖，未命中保持现状）
         buildMenu();
         applyMode();
       }
@@ -577,8 +589,15 @@
       // 服务端渲染的外挂 <track>：统一初始 mode，默认开启带 default 的轨道
       const def = player.querySelector('track[default]');
       if (def) currentLabel = def.label;
+      applyPrefLabel(); // 全局偏好优先于 <track default>；从未设置时维持默认
       tracks().forEach((t) => { t.mode = (t.label === currentLabel) ? 'showing' : 'disabled'; });
       buildMenu();
+      // 重置偏好：回到 <track default>（无 default 则全关）并刷新菜单高亮
+      window.addEventListener('prefs-reset', () => {
+        currentLabel = def ? def.label : null;
+        tracks().forEach((t) => { t.mode = (t.label === currentLabel) ? 'showing' : 'disabled'; });
+        buildMenu();
+      });
       return { addEmbedded, buildMenu, applyMode };
     })();
   </script>
@@ -616,12 +635,27 @@
         dropdown.appendChild(mgr);
       }
       function select(label, btnEl) {
+        window.PlayerPrefs.save({ subLabel: label }); // null=用户明确关闭字幕
         tracks().forEach((t) => { t.mode = (t.label === label) ? 'showing' : 'disabled'; });
         dropdown.querySelectorAll('.track-item').forEach(el => el.classList.remove('current'));
         if (btnEl) btnEl.classList.add('current');
       }
       const def = player.querySelector('track[default]');
-      tracks().forEach((t) => { t.mode = (def && t.label === def.label) ? 'showing' : 'disabled'; });
+      // 全局偏好优先于 <track default>：null=全关，字符串命中=该轨道，undefined=维持默认
+      const prefLabel = window.PlayerPrefs.getSubLabel();
+      let initialLabel = def ? def.label : null;
+      if (prefLabel === null) {
+        initialLabel = null;
+      } else if (typeof prefLabel === 'string' && tracks().some((t) => t.label === prefLabel)) {
+        initialLabel = prefLabel;
+      }
+      tracks().forEach((t) => { t.mode = (t.label === initialLabel) ? 'showing' : 'disabled'; });
+      // 重置偏好：回到 <track default>（无 default 则全关）并重建菜单高亮
+      window.addEventListener('prefs-reset', () => {
+        const fallback = def ? def.label : null;
+        tracks().forEach((t) => { t.mode = (t.label === fallback) ? 'showing' : 'disabled'; });
+        buildMenu();
+      });
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         dropdown.classList.toggle('open');
@@ -1439,6 +1473,67 @@
   </script>
   {{end}}
 
+  <!-- 播放器偏好：localStorage 全局记忆音量/静音、倍速、字幕轨道、字幕字号（原画与转码通用，无条件渲染） -->
+  <script>
+    window.PlayerPrefs = (() => {
+      const KEY = 'vw:prefs';
+      const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];   // 与倍速菜单白名单一致
+      const CUES = ['cue-sm', 'cue-md', 'cue-lg'];  // 与字号菜单 class 白名单一致
+      // 隐私模式等场景 localStorage 写入可能抛错，此时降级为仅内存态，不影响播放
+      let mem = {};
+      let cache = null; // 只 parse 一次；null 表示尚未加载
+
+      function rawGet() {
+        try { return window.localStorage.getItem(KEY); } catch (_) { return null; }
+      }
+      function rawSet(str) {
+        try { window.localStorage.setItem(KEY, str); } catch (_) { mem.__raw = str; }
+      }
+      function rawRemove() {
+        try { window.localStorage.removeItem(KEY); } catch (_) { /* 忽略 */ }
+        mem = {};
+      }
+      // load 读取并做字段级校验，坏字段只丢自己，根节点非法则整体视为无偏好
+      function load() {
+        if (cache) return cache;
+        let obj = null;
+        const raw = rawGet() || (mem.__raw !== undefined ? mem.__raw : null);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) obj = parsed;
+          } catch (_) { obj = null; }
+        }
+        const prefs = {};
+        if (obj) {
+          if (typeof obj.volume === 'number' && isFinite(obj.volume)) {
+            prefs.volume = Math.min(1, Math.max(0, obj.volume));
+          }
+          if (typeof obj.muted === 'boolean') prefs.muted = obj.muted;
+          if (typeof obj.rate === 'number' && RATES.includes(obj.rate)) prefs.rate = obj.rate;
+          if (typeof obj.cue === 'string' && CUES.includes(obj.cue)) prefs.cue = obj.cue;
+          // subLabel 允许 null（用户明确关闭字幕）；undefined 表示从未设置，调用方需区分
+          if (obj.subLabel === null || typeof obj.subLabel === 'string') prefs.subLabel = obj.subLabel;
+        }
+        cache = prefs;
+        return cache;
+      }
+      function get(key) { return load()[key]; }
+      // getSubLabel 专门暴露给字幕模块：null=明确关闭，字符串=指定轨道，undefined=从未设置
+      function getSubLabel() { return load().subLabel; }
+      function save(patch) {
+        const merged = Object.assign(load(), patch);
+        cache = merged;
+        rawSet(JSON.stringify(merged));
+      }
+      function reset() {
+        cache = {};
+        rawRemove();
+      }
+      return { get, getSubLabel, save, reset };
+    })();
+  </script>
+
   <!-- 播放器增强：倍速、字幕字号、键盘快捷键（原画与转码通用，无条件渲染） -->
   <script>
     (() => {
@@ -1471,18 +1566,21 @@
       // ---- 倍速菜单 ----
       const speedDropdown = document.getElementById('speed-dropdown');
       const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+      const savedRate = window.PlayerPrefs.get('rate'); // 未设置/非法时为 undefined，回退 1x
       speeds.forEach((rate) => {
         const item = document.createElement('button');
         item.type = 'button';
-        item.className = 'track-item' + (rate === 1 ? ' current' : '');
+        item.className = 'track-item' + (rate === (savedRate || 1) ? ' current' : '');
         item.textContent = rate + 'x';
         item.addEventListener('click', () => {
           player.playbackRate = rate;
+          window.PlayerPrefs.save({ rate });
           speedDropdown.querySelectorAll('.track-item').forEach((el) => el.classList.remove('current'));
           item.classList.add('current');
         });
         speedDropdown.appendChild(item);
       });
+      if (savedRate) player.playbackRate = savedRate; // 恢复偏好倍速
       bindDropdown('speed-menu-btn', 'speed-dropdown');
 
       // ---- 字幕字号：通过 #player 的 class 驱动 ::cue 字号 ----
@@ -1492,21 +1590,77 @@
         { label: '中', cls: 'cue-md' },
         { label: '大', cls: 'cue-lg' },
       ];
-      cueSizes.forEach((size, idx) => {
+      const savedCue = window.PlayerPrefs.get('cue'); // 未设置/非法时为 undefined，回默认中字号
+      const initialCue = cueSizes.some((s) => s.cls === savedCue) ? savedCue : 'cue-md';
+      cueSizes.forEach((size) => {
         const item = document.createElement('button');
         item.type = 'button';
-        item.className = 'track-item' + (idx === 1 ? ' current' : ''); // 默认中
+        item.className = 'track-item' + (size.cls === initialCue ? ' current' : '');
         item.textContent = size.label;
         item.addEventListener('click', () => {
           player.classList.remove('cue-sm', 'cue-md', 'cue-lg');
           player.classList.add(size.cls);
+          window.PlayerPrefs.save({ cue: size.cls });
           cueDropdown.querySelectorAll('.track-item').forEach((el) => el.classList.remove('current'));
           item.classList.add('current');
         });
         cueDropdown.appendChild(item);
       });
-      player.classList.add('cue-md'); // 默认中字号
+      player.classList.add(initialCue);
       bindDropdown('cue-menu-btn', 'cue-dropdown');
+
+      // ---- 音量/静音：volumechange 统一捕获原生控件与快捷键两条修改路径 ----
+      // 恢复默认值时浏览器不保证触发事件，故以「当前值 == 已存基线则跳过」代替事件标志，无时序依赖
+      const volPref = window.PlayerPrefs.get('volume');
+      const mutedPref = window.PlayerPrefs.get('muted');
+      let volBaseline = player.volume;
+      let mutedBaseline = player.muted;
+      if (typeof volPref === 'number') {
+        player.volume = volPref;
+        volBaseline = volPref;
+      }
+      if (typeof mutedPref === 'boolean') {
+        player.muted = mutedPref;
+        mutedBaseline = mutedPref;
+      }
+      player.addEventListener('volumechange', () => {
+        const v = Number(player.volume.toFixed(2));
+        if (v === volBaseline && player.muted === mutedBaseline) return; // 恢复动作或重复事件，不回写
+        volBaseline = v;
+        mutedBaseline = player.muted;
+        window.PlayerPrefs.save({ volume: v, muted: player.muted });
+      });
+
+      // ---- 重置偏好：清存储并立即恢复四项默认，不 reload、不打断播放 ----
+      const prefToast = document.getElementById('pref-toast');
+      function showPrefToast(msg) {
+        prefToast.textContent = msg;
+        prefToast.hidden = false;
+        clearTimeout(showPrefToast._t);
+        showPrefToast._t = setTimeout(() => { prefToast.hidden = true; }, 2600);
+      }
+      document.getElementById('pref-reset-btn').addEventListener('click', () => {
+        window.PlayerPrefs.reset();
+        // 倍速回 1x 并同步菜单高亮
+        player.playbackRate = 1;
+        speedDropdown.querySelectorAll('.track-item').forEach((el) => {
+          el.classList.toggle('current', el.textContent === '1x');
+        });
+        // 字号回中
+        player.classList.remove('cue-sm', 'cue-md', 'cue-lg');
+        player.classList.add('cue-md');
+        cueDropdown.querySelectorAll('.track-item').forEach((el) => {
+          el.classList.toggle('current', el.textContent === '中');
+        });
+        // 音量回默认；先重建基线，避免默认值与旧偏好不同时触发的 volumechange 回写存储
+        player.volume = 1;
+        player.muted = false;
+        volBaseline = 1;
+        mutedBaseline = false;
+        // 通知字幕模块按 <track default> 回退
+        window.dispatchEvent(new CustomEvent('prefs-reset'));
+        showPrefToast('已恢复默认播放偏好');
+      });
 
       // ---- 键盘快捷键 ----
       // 守卫：输入控件聚焦、弹窗打开时不拦截，交给页面原有行为；
@@ -1796,6 +1950,7 @@
     </div>
   </div>
   <div class="skip-toast" id="sub-mgr-toast" role="status" aria-live="polite" hidden></div>
+  <div class="skip-toast" id="pref-toast" role="status" aria-live="polite" hidden></div>
   <script>
     (() => {
       const videoId = {{printf "%q" .Video.ID}};

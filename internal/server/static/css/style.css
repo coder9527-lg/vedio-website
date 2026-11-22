@@ -1104,3 +1104,7 @@ button:disabled { opacity: .6; cursor: wait; }
 .sub-mgr-meta { color: var(--muted); font-size: 12px; flex-shrink: 0; }
 .sub-mgr-del { padding: 5px 12px; font-size: 13px; flex-shrink: 0; }
 #sub-upload-file { font-size: 13px; color: var(--muted); }
+
+/* 播放器偏好重置按钮：复用 .track-btn 外观，仅补间距并推到控制区右侧 */
+#pref-menu-wrap { margin-left: auto; }
+#pref-reset-btn { white-space: nowrap; }
