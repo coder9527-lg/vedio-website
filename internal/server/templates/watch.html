@@ -141,6 +141,17 @@
           <button type="button" class="track-item" id="abloop-clear" role="menuitem">清除循环</button>
         </div>
       </div>
+      <div class="track-menu" id="fit-menu-wrap">
+        <button type="button" id="fit-menu-btn" class="track-btn"
+                aria-haspopup="true" aria-expanded="false">
+          画面 <span class="caret">▾</span>
+        </button>
+        <div class="track-dropdown" id="fit-dropdown" role="menu">
+          <button type="button" class="track-item current" data-fit="contain" role="menuitem">适应</button>
+          <button type="button" class="track-item" data-fit="cover" role="menuitem">裁切铺满</button>
+          <button type="button" class="track-item" data-fit="fill" role="menuitem">拉伸填充</button>
+        </div>
+      </div>
     </div>
 
     <!-- 快捷键说明面板：复用刮削弹窗骨架，? 键与按钮双入口，Esc/✕/遮罩关闭 -->
@@ -1042,6 +1053,69 @@
     })();
   </script>
 
+  <!-- 画面缩放：contain/cover/fill 三档切换 object-fit，偏好走 PlayerPrefs 全局记忆 -->
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const menuBtn = document.getElementById('fit-menu-btn');
+      const dropdown = document.getElementById('fit-dropdown');
+      const items = Array.from(dropdown.querySelectorAll('.track-item'));
+      const toast = document.getElementById('shot-toast');
+      if (!player || !menuBtn || !dropdown || !toast || !window.PlayerPrefs) return;
+
+      const FIT_DEFAULT = 'contain';
+      // 模式 → 提示文案；与菜单 data-fit 白名单一致
+      const LABELS = { contain: '适应', cover: '裁切铺满', fill: '拉伸填充' };
+      const FIT_CLASSES = ['fit-contain', 'fit-cover', 'fit-fill'];
+
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.hidden = false;
+        clearTimeout(showToast._t);
+        showToast._t = setTimeout(() => { toast.hidden = true; }, 2600);
+      }
+      // class 驱动 CSS 规则，inline style 兜底确保 object-fit 必然生效
+      function applyFit(mode) {
+        player.classList.remove(...FIT_CLASSES);
+        player.classList.add('fit-' + mode);
+        player.style.objectFit = mode;
+        items.forEach((el) => el.classList.toggle('current', el.dataset.fit === mode));
+      }
+
+      // 初始化：命中白名单的历史偏好优先，否则维持模板默认 contain
+      const saved = window.PlayerPrefs.get('videoFit');
+      applyFit(saved && LABELS[saved] ? saved : FIT_DEFAULT);
+
+      items.forEach((el) => {
+        el.addEventListener('click', () => {
+          const mode = el.dataset.fit;
+          if (!LABELS[mode]) return; // 白名单外值忽略
+          applyFit(mode);
+          window.PlayerPrefs.save({ videoFit: mode });
+          showToast('画面：' + LABELS[mode]);
+          dropdown.classList.remove('open');
+          menuBtn.setAttribute('aria-expanded', 'false');
+        });
+      });
+
+      // 重置偏好：与字幕模块同款事件总线，收到后回默认档（存储已由偏好段清空）
+      window.addEventListener('prefs-reset', () => applyFit(FIT_DEFAULT));
+
+      // 自包含下拉开关（与其他菜单段同款行为，避免跨段引用局部函数）
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+        menuBtn.setAttribute('aria-expanded', dropdown.classList.contains('open'));
+      });
+      document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target)) {
+          dropdown.classList.remove('open');
+          menuBtn.setAttribute('aria-expanded', 'false');
+        }
+      });
+    })();
+  </script>
+
   {{if .StoreOn}}
   <script>
     (() => {
@@ -1825,6 +1899,7 @@
       const KEY = 'vw:prefs';
       const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];   // 与倍速菜单白名单一致
       const CUES = ['cue-sm', 'cue-md', 'cue-lg'];  // 与字号菜单 class 白名单一致
+      const FITS = ['contain', 'cover', 'fill'];    // 与画面缩放菜单 data-fit 白名单一致
       // 隐私模式等场景 localStorage 写入可能抛错，此时降级为仅内存态，不影响播放
       let mem = {};
       let cache = null; // 只 parse 一次；null 表示尚未加载
@@ -1858,6 +1933,7 @@
           if (typeof obj.muted === 'boolean') prefs.muted = obj.muted;
           if (typeof obj.rate === 'number' && RATES.includes(obj.rate)) prefs.rate = obj.rate;
           if (typeof obj.cue === 'string' && CUES.includes(obj.cue)) prefs.cue = obj.cue;
+          if (typeof obj.videoFit === 'string' && FITS.includes(obj.videoFit)) prefs.videoFit = obj.videoFit;
           // subLabel 允许 null（用户明确关闭字幕）；undefined 表示从未设置，调用方需区分
           if (obj.subLabel === null || typeof obj.subLabel === 'string') prefs.subLabel = obj.subLabel;
         }
