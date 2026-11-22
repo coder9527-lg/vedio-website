@@ -158,6 +158,11 @@
           <button type="button" class="track-item current" data-fit="contain" role="menuitem">适应</button>
           <button type="button" class="track-item" data-fit="cover" role="menuitem">裁切铺满</button>
           <button type="button" class="track-item" data-fit="fill" role="menuitem">拉伸填充</button>
+          <div class="track-sep" aria-hidden="true"></div>
+          <button type="button" class="track-item current" data-rot="0" role="menuitem">旋转 0°</button>
+          <button type="button" class="track-item" data-rot="90" role="menuitem">旋转 90°</button>
+          <button type="button" class="track-item" data-rot="180" role="menuitem">旋转 180°</button>
+          <button type="button" class="track-item" data-rot="270" role="menuitem">旋转 270°</button>
         </div>
       </div>
     </div>
@@ -1109,7 +1114,62 @@
       });
 
       // 重置偏好：与字幕模块同款事件总线，收到后回默认档（存储已由偏好段清空）
-      window.addEventListener('prefs-reset', () => applyFit(FIT_DEFAULT));
+      window.addEventListener('prefs-reset', () => {
+        applyFit(FIT_DEFAULT);
+        applyRotation(ROT_DEFAULT);
+      });
+
+      /* ===== 画面旋转：0/90/180/270，偏好并入同一 vw:prefs 的 videoRot 字段 ===== */
+      const wrap = document.querySelector('.player-wrap');
+      const rotItems = Array.from(dropdown.querySelectorAll('[data-rot]'));
+      const ROT_DEFAULT = 0;
+      const ROTATIONS = [0, 90, 180, 270]; // 与菜单 data-rot 白名单一致
+
+      // 90/270 时视觉宽高互换：令元素高 = 容器宽（旋转后即视觉宽），
+      // 元素宽按视频宽高比反算（旋转后即视觉高），使旋转画面贴合容器且不溢出
+      function layoutRotated(deg) {
+        if (deg === 90 || deg === 270) {
+          const cw = wrap.clientWidth || player.clientWidth;
+          const vw = player.videoWidth || 16;
+          const vh = player.videoHeight || 9;
+          const elemW = cw * (vw / vh);
+          player.style.width = elemW + 'px';
+          player.style.height = cw + 'px';
+          player.style.margin = '0 auto';
+        } else {
+          player.style.width = '';
+          player.style.height = '';
+          player.style.margin = '';
+        }
+      }
+
+      function applyRotation(deg) {
+        deg = ROTATIONS.includes(deg) ? deg : ROT_DEFAULT;
+        player.style.transform = deg === 0 ? '' : `rotate(${deg}deg)`;
+        layoutRotated(deg);
+        rotItems.forEach((el) => el.classList.toggle('current', Number(el.dataset.rot) === deg));
+      }
+
+      // 初始化：命中白名单的历史偏好优先，否则 0°
+      const savedRot = window.PlayerPrefs.get('videoRot');
+      applyRotation(typeof savedRot === 'number' && ROTATIONS.includes(savedRot) ? savedRot : ROT_DEFAULT);
+      // 视频元数据就绪后重新布局（此时才有真实 videoWidth/Height）
+      player.addEventListener('loadedmetadata', () => {
+        const cur = Number((/rotate\((\d+)deg\)/.exec(player.style.transform) || [])[1] || 0);
+        layoutRotated(cur);
+      });
+
+      rotItems.forEach((el) => {
+        el.addEventListener('click', () => {
+          const deg = Number(el.dataset.rot);
+          if (!ROTATIONS.includes(deg)) return; // 白名单外值忽略
+          applyRotation(deg);
+          window.PlayerPrefs.save({ videoRot: deg });
+          showToast('旋转：' + deg + '°');
+          dropdown.classList.remove('open');
+          menuBtn.setAttribute('aria-expanded', 'false');
+        });
+      });
 
       // 自包含下拉开关（与其他菜单段同款行为，避免跨段引用局部函数）
       menuBtn.addEventListener('click', (e) => {
@@ -2093,6 +2153,7 @@
       const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];   // 与倍速菜单白名单一致
       const CUES = ['cue-sm', 'cue-md', 'cue-lg'];  // 与字号菜单 class 白名单一致
       const FITS = ['contain', 'cover', 'fill'];    // 与画面缩放菜单 data-fit 白名单一致
+      const ROTS = [0, 90, 180, 270];                // 与画面旋转菜单 data-rot 白名单一致
       // 隐私模式等场景 localStorage 写入可能抛错，此时降级为仅内存态，不影响播放
       let mem = {};
       let cache = null; // 只 parse 一次；null 表示尚未加载
@@ -2127,6 +2188,7 @@
           if (typeof obj.rate === 'number' && RATES.includes(obj.rate)) prefs.rate = obj.rate;
           if (typeof obj.cue === 'string' && CUES.includes(obj.cue)) prefs.cue = obj.cue;
           if (typeof obj.videoFit === 'string' && FITS.includes(obj.videoFit)) prefs.videoFit = obj.videoFit;
+          if (typeof obj.videoRot === 'number' && ROTS.includes(obj.videoRot)) prefs.videoRot = obj.videoRot;
           // subLabel 允许 null（用户明确关闭字幕）；undefined 表示从未设置，调用方需区分
           if (obj.subLabel === null || typeof obj.subLabel === 'string') prefs.subLabel = obj.subLabel;
         }
