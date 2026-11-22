@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/coder9527-lg/vedio-website/internal/auth"
@@ -319,4 +320,104 @@ func toShareView(sh *store.Share) shareView {
 		ExpiresAt:   sh.ExpiresAt,
 		CreatedAt:   sh.CreatedAt,
 	}
+}
+
+// ---------- 分享管理中心（HTML 页面，受鉴权链保护）----------
+
+// shareListItem 是管理中心列表中的一条分享，附带渲染所需的视频名与状态。
+type shareListItem struct {
+	Share      store.Share
+	VideoName  string
+	VideoOK    bool
+	ShareURL   string
+	Expired    bool
+	ExpireText string
+}
+
+// shareListPage 是分享管理中心的页面视图模型。
+type shareListPage struct {
+	basePage
+	StoreOn bool
+	Items   []shareListItem
+	Cleared int // 清理过期动作带回的成功条数，零值不显示提示
+}
+
+// handleShareCenter 渲染分享管理中心：全量列出分享，过期状态按当前时间实时判定。
+func (s *Server) handleShareCenter(w http.ResponseWriter, r *http.Request) {
+	data := shareListPage{
+		basePage: basePage{Title: "分享管理", AuthEnabled: s.authEnabled()},
+		StoreOn:  s.storeEnabled(),
+	}
+	if !s.storeEnabled() {
+		s.render(w, "shares.html", data)
+		return
+	}
+	// ?cleared=N 由清理动作 PRG 带回，非法或缺省一律按 0 处理（不显示提示）
+	if n, err := strconv.Atoi(r.URL.Query().Get("cleared")); err == nil && n > 0 {
+		data.Cleared = n
+	}
+
+	shares, err := s.store.ListAllShares()
+	if err != nil {
+		log.Printf("查询全部分享失败: %v", err)
+		http.Error(w, "查询分享列表失败", http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now().UTC()
+	data.Items = make([]shareListItem, 0, len(shares))
+	for _, sh := range shares {
+		item := shareListItem{
+			Share:    sh,
+			ShareURL: "/share/" + sh.Token,
+			Expired:  sh.ExpiresAt.Before(now),
+		}
+		item.ExpireText = sh.ExpiresAt.Local().Format("2006-01-02 15:04")
+		if v, ok := s.library.Get(sh.VideoID); ok {
+			item.VideoOK = true
+			item.VideoName = v.Name + v.Ext
+		} else {
+			// 视频已从媒体库移除：保留分享记录但禁止跳转，提示用户可直接撤销
+			item.VideoName = "已删除视频 #" + sh.VideoID
+		}
+		data.Items = append(data.Items, item)
+	}
+
+	s.render(w, "shares.html", data)
+}
+
+// handleShareRevoke 从管理中心撤销一条分享（按 token），PRG 跳回列表。
+func (s *Server) handleShareRevoke(w http.ResponseWriter, r *http.Request) {
+	if !s.requireStore(w) {
+		return
+	}
+	token := r.PostFormValue("token")
+	if token == "" {
+		http.Error(w, "缺少分享 token", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.DeleteShare(token); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "分享不存在或已被撤销", http.StatusNotFound)
+			return
+		}
+		log.Printf("撤销分享失败: %v", err)
+		http.Error(w, "撤销分享失败", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/shares", http.StatusSeeOther)
+}
+
+// handleShareCleanExpired 一键清理全部已过期分享，按影响行数 PRG 回列表并提示。
+func (s *Server) handleShareCleanExpired(w http.ResponseWriter, r *http.Request) {
+	if !s.requireStore(w) {
+		return
+	}
+	n, err := s.store.DeleteExpiredShares(time.Now().UTC())
+	if err != nil {
+		log.Printf("清理过期分享失败: %v", err)
+		http.Error(w, "清理过期分享失败", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/shares?cleared="+strconv.FormatInt(n, 10), http.StatusSeeOther)
 }

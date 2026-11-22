@@ -83,6 +83,35 @@ func TestShareListByVideo(t *testing.T) {
 	}
 }
 
+func TestShareListAll(t *testing.T) {
+	s := openTestStore(t)
+	// 空库应返回空切片而非 nil 报错
+	if list, err := s.ListAllShares(); err != nil || len(list) != 0 {
+		t.Fatalf("空库 ListAllShares 应为空，got %d err=%v", len(list), err)
+	}
+	if _, err := s.CreateShare("v1", 24, ""); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond) // 保证 created_at 可区分顺序
+	if _, err := s.CreateShare("v2", 168, "secret123"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListAllShares()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("应返回全部 2 条分享，实际 %d", len(list))
+	}
+	// 创建时间倒序：后建的排前面，且跨视频记录都在
+	if list[0].VideoID != "v2" || list[1].VideoID != "v1" {
+		t.Fatalf("应按创建时间倒序且跨视频聚合，got %+v", list)
+	}
+	if !list[0].HasPasscode() {
+		t.Fatalf("带码分享的标记应正确回读")
+	}
+}
+
 func TestShareDelete(t *testing.T) {
 	s := openTestStore(t)
 	sh, err := s.CreateShare("v1", 24, "")

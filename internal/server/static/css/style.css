@@ -1280,3 +1280,77 @@ button:disabled { opacity: .6; cursor: wait; }
   cursor: pointer;
 }
 .theme-toggle-float:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 分享管理中心：纵向卡片列表 */
+.share-mgr-list { display: grid; gap: 12px; margin-top: 16px; }
+.share-mgr-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.share-mgr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.share-mgr-name { font-size: 15px; font-weight: 600; word-break: break-all; }
+a.share-mgr-name:hover { color: var(--accent); }
+.share-mgr-name-gone { color: var(--muted); }
+.share-status {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.share-status-expired {
+  color: var(--danger-soft);
+  border-color: var(--danger-border);
+}
+.share-mgr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 8px 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.share-mgr-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.share-mgr-link { color: var(--accent); font-size: 14px; }
+.share-mgr-actions .share-copy-btn { padding: 6px 14px; font-size: 13px; }
+.share-mgr-actions .share-del-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  background: none;
+  border: 1px solid var(--danger-border);
+  color: var(--danger-soft);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.share-mgr-actions .share-del-btn:hover { background: var(--danger-bg); }
+.share-clean-form { margin-top: 14px; }
+.share-clear-hint {
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-soft);
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .share-mgr-actions { flex-direction: column; align-items: stretch; }
+  .share-mgr-actions .inline-form,
+  .share-mgr-actions .share-copy-btn,
+  .share-mgr-link { text-align: center; }
+}

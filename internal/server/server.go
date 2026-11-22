@@ -119,6 +119,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("POST /history/clear", s.handleClearHistory)
 	mux.HandleFunc("POST /history/event/delete", s.handleDeleteEvent)
+	// 分享管理中心：全量列表、单条撤销、清理过期（受鉴权链保护）
+	mux.HandleFunc("GET /shares", s.handleShareCenter)
+	mux.HandleFunc("POST /shares/delete", s.handleShareRevoke)
+	mux.HandleFunc("POST /shares/clean-expired", s.handleShareCleanExpired)
 	mux.HandleFunc("GET /api/v1/shows", s.handleAPIListShows)
 	mux.HandleFunc("GET /api/v1/shows/{id}", s.handleAPIGetShow)
 	mux.HandleFunc("GET /api/v1/videos", s.handleAPIList)

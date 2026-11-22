@@ -118,6 +118,26 @@ func (s *Store) ListSharesByVideo(videoID string) ([]Share, error) {
 	return out, rows.Err()
 }
 
+// ListAllShares 返回全部分享（含已过期未清理的记录，按创建时间倒序），供分享管理中心展示。
+func (s *Store) ListAllShares() ([]Share, error) {
+	rows, err := s.db.Query(
+		`SELECT token, video_id, passcode_hash, expires_at, created_at
+		 FROM shares ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Share
+	for rows.Next() {
+		var sh Share
+		if err := rows.Scan(&sh.Token, &sh.VideoID, &sh.PasscodeHash, &sh.ExpiresAt, &sh.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, sh)
+	}
+	return out, rows.Err()
+}
+
 // DeleteShare 撤销分享；记录不存在返回 ErrNotFound。
 func (s *Store) DeleteShare(token string) error {
 	res, err := s.db.Exec(`DELETE FROM shares WHERE token = ?`, token)

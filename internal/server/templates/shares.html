@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="stats-heading">🔗 分享管理</h2>
+
+    {{if not .StoreOn}}
+    <div class="empty">
+      <p>未启用持久化（DB_PATH 未配置），暂无分享管理。</p>
+      <p class="hint">配置数据库路径后，在视频播放页创建的文件分享会集中展示在此。</p>
+    </div>
+    {{else if not .Items}}
+    <div class="empty">
+      <p>还没有创建过分享。</p>
+      <p class="hint">打开任意视频的播放页，即可为该文件生成带有效期、可选提取码的分享链接。</p>
+    </div>
+    {{else}}
+
+    {{if .Cleared}}
+    <p class="share-clear-hint" role="status">已清理 {{.Cleared}} 条过期分享。</p>
+    {{end}}
+
+    <form method="post" action="/shares/clean-expired" class="inline-form share-clean-form"
+          onsubmit="return confirm('确定清理全部已过期的分享吗？此操作不可恢复。');">
+      <button type="submit" class="btn-secondary">清理已过期</button>
+    </form>
+
+    <div class="share-mgr-list">
+      {{range .Items}}
+      <div class="share-mgr-card">
+        <div class="share-mgr-head">
+          {{if .VideoOK}}
+          <a class="share-mgr-name" href="/watch/{{.Share.VideoID}}">{{.VideoName}}</a>
+          {{else}}
+          <span class="share-mgr-name share-mgr-name-gone">{{.VideoName}}</span>
+          {{end}}
+          {{if .Expired}}
+          <span class="share-status share-status-expired">已过期</span>
+          {{else}}
+          <span class="share-status">有效</span>
+          {{end}}
+        </div>
+        <div class="share-mgr-meta">
+          <span>{{if .Share.HasPasscode}}提取码：已设置{{else}}无提取码{{end}}</span>
+          <span>创建于 {{.Share.CreatedAt.Local.Format "2006-01-02 15:04"}}</span>
+          <span>有效期至 {{.ExpireText}}</span>
+        </div>
+        <div class="share-mgr-actions">
+          <a class="share-mgr-link" href="{{.ShareURL}}" target="_blank" rel="noopener">打开分享页</a>
+          <button type="button" class="btn-secondary share-copy-btn" data-copy="{{.ShareURL}}">复制链接</button>
+          <form method="post" action="/shares/delete" class="inline-form"
+                onsubmit="return confirm('确定撤销这条分享吗？撤销后原链接立即失效。');">
+            <input type="hidden" name="token" value="{{.Share.Token}}">
+            <button type="submit" class="share-del-btn">撤销</button>
+          </form>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+  </main>
+
+  <script>
+    // 复制分享链接：优先 Clipboard API，非安全上下文降级临时 input + execCommand
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.share-copy-btn');
+      if (!btn) return;
+      var url = btn.getAttribute('data-copy');
+      function markCopied() {
+        var old = btn.textContent;
+        btn.textContent = '已复制';
+        setTimeout(function () { btn.textContent = old; }, 2000);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(markCopied).catch(function () { fallback(); });
+      } else {
+        fallback();
+      }
+      function fallback() {
+        var input = document.createElement('input');
+        input.value = url;
+        document.body.appendChild(input);
+        input.select();
+        try { document.execCommand('copy'); markCopied(); } catch (err) {}
+        document.body.removeChild(input);
+      }
+    });
+  </script>
+</body>
+</html>
