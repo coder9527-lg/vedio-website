@@ -1233,8 +1233,9 @@ button:disabled { opacity: .6; cursor: wait; }
 .sub-mgr-del { padding: 5px 12px; font-size: 13px; flex-shrink: 0; }
 #sub-upload-file { font-size: 13px; color: var(--muted); }
 
-/* 播放器偏好重置按钮：复用 .track-btn 外观，仅补间距并推到控制区右侧 */
-#pref-menu-wrap { margin-left: auto; }
+/* 控制栏「更多」菜单：推到控制区右侧，收纳低频直按功能 */
+#more-menu-wrap { margin-left: auto; }
+#more-dropdown { min-width: 168px; }
 #pref-reset-btn { white-space: nowrap; }
 
 /* 统计页 CSV 导出入口：右对齐并与下方概览卡片拉开间距 */
@@ -1353,4 +1354,44 @@ a.share-mgr-name:hover { color: var(--accent); }
   .share-mgr-actions .inline-form,
   .share-mgr-actions .share-copy-btn,
   .share-mgr-link { text-align: center; }
+}
+
+/* 首页「更多」导航下拉：与播放页 track 下拉同视觉家族，独立命名避免污染 */
+.nav-more { position: relative; }
+.nav-more-btn { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.nav-more-btn .caret { font-size: 11px; }
+.nav-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 168px;
+  z-index: 30;
+  padding: 6px;
+  grid-auto-rows: minmax(38px, auto);
+  gap: 2px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px var(--shadow);
+}
+.nav-dropdown.open { display: grid; }
+.nav-dropdown-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.nav-dropdown-item:hover { background: rgba(56, 189, 248, .12); }
+
+@media (max-width: 640px) {
+  /* 视图行单行横滑（与播放控制栏窄屏收纳范式一致），下拉改近全宽防裁切 */
+  .view-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .view-tabs::-webkit-scrollbar { display: none; }
+  .nav-more { position: static; }
+  .nav-dropdown { left: 8px; right: 8px; min-width: 0; }
 }

@@ -122,30 +122,6 @@
         </button>
         <div class="track-dropdown" id="cue-dropdown" role="menu"></div>
       </div>
-      {{if .StoreOn}}
-      <div class="track-menu" id="skip-menu-wrap">
-        <button type="button" id="skip-open-btn" class="track-btn">跳过片头片尾</button>
-      </div>
-      <div class="track-menu" id="bm-menu-wrap">
-        <button type="button" id="bm-add-btn" class="track-btn">＋书签</button>
-      </div>
-      {{end}}
-      <div class="track-menu" id="pref-menu-wrap">
-        <button type="button" id="pref-reset-btn" class="track-btn">重置偏好</button>
-      </div>
-      <div class="track-menu" id="shot-menu-wrap">
-        <button type="button" id="screenshot-btn" class="track-btn">📷 截图</button>
-      </div>
-      <div class="track-menu" id="pip-menu-wrap" hidden>
-        <button type="button" id="pip-btn" class="track-btn" aria-pressed="false">画中画</button>
-      </div>
-      <div class="track-menu" id="kbd-menu-wrap">
-        <button type="button" id="kbd-help-btn" class="track-btn"
-                aria-haspopup="dialog" aria-expanded="false">快捷键 ?</button>
-      </div>
-      <div class="track-menu" id="ts-link-menu-wrap">
-        <button type="button" id="timestamp-link-btn" class="track-btn">🔗 时间点</button>
-      </div>
       <div class="track-menu" id="sleep-menu-wrap">
         <button type="button" id="sleep-menu-btn" class="track-btn"
                 aria-haspopup="true" aria-expanded="false">
@@ -178,6 +154,23 @@
           <button type="button" class="track-item" data-rot="90" role="menuitem">旋转 90°</button>
           <button type="button" class="track-item" data-rot="180" role="menuitem">旋转 180°</button>
           <button type="button" class="track-item" data-rot="270" role="menuitem">旋转 270°</button>
+        </div>
+      </div>
+      <!-- 低频直按功能收纳进「更多」下拉；按钮 id 保持不变，既有事件监听继续生效 -->
+      <div class="track-menu" id="more-menu-wrap">
+        <button type="button" id="more-menu-btn" class="track-btn"
+                aria-haspopup="true" aria-expanded="false">更多 <span class="caret">▾</span></button>
+        <div class="track-dropdown" id="more-dropdown" role="menu">
+          {{if .StoreOn}}
+          <button type="button" class="track-item" id="skip-open-btn" role="menuitem">跳过片头片尾</button>
+          <button type="button" class="track-item" id="bm-add-btn" role="menuitem">＋书签</button>
+          {{end}}
+          <button type="button" class="track-item" id="pref-reset-btn" role="menuitem">重置偏好</button>
+          <button type="button" class="track-item" id="screenshot-btn" role="menuitem">📷 截图</button>
+          <button type="button" class="track-item" id="pip-btn" role="menuitem" aria-pressed="false" hidden>画中画</button>
+          <button type="button" class="track-item" id="kbd-help-btn" role="menuitem"
+                  aria-haspopup="dialog" aria-expanded="false">快捷键 ?</button>
+          <button type="button" class="track-item" id="timestamp-link-btn" role="menuitem">🔗 时间点</button>
         </div>
       </div>
     </div>
@@ -2291,13 +2284,12 @@
   <script>
     (() => {
       const player = document.getElementById('player');
-      const wrap = document.getElementById('pip-menu-wrap');
       const btn = document.getElementById('pip-btn');
       const toast = document.getElementById('shot-toast');
-      if (!player || !wrap || !btn || !toast) return;
-      // 能力检测：旧浏览器/iOS 不支持时按钮整体不显示，避免点击报错
+      if (!player || !btn || !toast) return;
+      // 能力检测：旧浏览器/iOS 不支持时按钮保持 hidden，避免点击报错
       if (!document.pictureInPictureEnabled) return;
-      wrap.hidden = false;
+      btn.hidden = false;
 
       function setActive(active) {
         btn.textContent = active ? '退出画中画' : '画中画';
@@ -2919,6 +2911,35 @@
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) closeModal(); });
       // 字幕菜单的固定入口通过自定义事件打开（三个渲染分支统一派发）
       window.addEventListener('open-sub-mgr', openModal);
+    })();
+
+    // 控制栏「更多」下拉：开关、点击外部/Esc 关闭，点击菜单项后自动收起（不拦截原处理器）
+    (function () {
+      const wrap = document.getElementById('more-menu-wrap');
+      const btn = document.getElementById('more-menu-btn');
+      const menu = document.getElementById('more-dropdown');
+      if (!wrap || !btn || !menu) return;
+      const setOpen = (open) => {
+        menu.classList.toggle('open', open);
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setOpen(!menu.classList.contains('open'));
+      });
+      document.addEventListener('click', (e) => {
+        if (!wrap.contains(e.target)) setOpen(false);
+      });
+      // 菜单项动作触发后收起下拉；hidden 的画中画项不会接收点击
+      menu.addEventListener('click', (e) => {
+        if (e.target.closest('.track-item')) setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && menu.classList.contains('open')) {
+          setOpen(false);
+          btn.focus();
+        }
+      });
     })();
   </script>
 </body>

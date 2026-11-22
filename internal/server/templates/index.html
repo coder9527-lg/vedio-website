@@ -82,9 +82,16 @@
       <a href="{{indexURL .Params "view" "continue" "genre" ""}}" class="tab {{if eq .View "continue"}}active{{end}}">继续观看</a>
       <a href="{{indexURL .Params "view" "favorites" "genre" ""}}" class="tab {{if eq .View "favorites"}}active{{end}}">⭐ 收藏</a>
       <a href="/?view=playlists" class="tab {{if eq .View "playlists"}}active{{end}}">📂 播放列表</a>
-      <a href="/stats" class="tab">📊 观影统计</a>
-      <a href="/history" class="tab">🕘 观看历史</a>
-      <a href="/shares" class="tab">🔗 分享管理</a>
+      <!-- 低频独立页面入口收纳进「更多」下拉，缓解视图行拥挤 -->
+      <div class="nav-more" id="nav-more-wrap">
+        <button type="button" class="tab nav-more-btn" id="nav-more-btn"
+                aria-haspopup="true" aria-expanded="false">更多 <span class="caret">▾</span></button>
+        <div class="nav-dropdown" id="nav-dropdown" role="menu">
+          <a class="nav-dropdown-item" role="menuitem" href="/stats">📊 观影统计</a>
+          <a class="nav-dropdown-item" role="menuitem" href="/history">🕘 观看历史</a>
+          <a class="nav-dropdown-item" role="menuitem" href="/shares">🔗 分享管理</a>
+        </div>
+      </div>
     </nav>
     {{end}}
 
@@ -799,6 +806,32 @@
       });
     });
     {{end}}
+
+    // 「更多」导航下拉：开关、点击外部/Esc 关闭。元素仅在持久化开启时渲染。
+    (function () {
+      const wrap = document.getElementById('nav-more-wrap');
+      const btn = document.getElementById('nav-more-btn');
+      const menu = document.getElementById('nav-dropdown');
+      if (!wrap || !btn || !menu) return;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = menu.classList.toggle('open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      document.addEventListener('click', (e) => {
+        if (!wrap.contains(e.target)) {
+          menu.classList.remove('open');
+          btn.setAttribute('aria-expanded', 'false');
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && menu.classList.contains('open')) {
+          menu.classList.remove('open');
+          btn.setAttribute('aria-expanded', 'false');
+          btn.focus();
+        }
+      });
+    })();
   </script>
 </body>
 </html>

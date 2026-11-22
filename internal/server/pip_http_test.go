@@ -16,10 +16,8 @@ func TestWatchPagePictureInPictureInjection(t *testing.T) {
 		t.Fatalf("播放页状态码 = %d", code)
 	}
 	for _, want := range []string{
-		// 入口：包裹层默认 hidden，按钮带 aria-pressed 初始态
-		`id="pip-menu-wrap" hidden`,
-		`id="pip-btn"`,
-		`aria-pressed="false"`,
+		// 入口：按钮默认 hidden（收纳进「更多」下拉），带 aria-pressed 初始态
+		`id="pip-btn" role="menuitem" aria-pressed="false" hidden`,
 		// 能力检测与进入/退出 API
 		`pictureInPictureEnabled`,
 		`requestPictureInPicture`,
