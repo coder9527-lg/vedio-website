@@ -130,6 +130,17 @@
         </button>
         <div class="track-dropdown" id="sleep-dropdown" role="menu"></div>
       </div>
+      <div class="track-menu" id="abloop-menu-wrap">
+        <button type="button" id="abloop-menu-btn" class="track-btn"
+                aria-haspopup="true" aria-expanded="false">
+          AB 循环 <span class="caret">▾</span>
+        </button>
+        <div class="track-dropdown" id="abloop-dropdown" role="menu">
+          <button type="button" class="track-item" id="abloop-set-a" role="menuitem">设 A 点</button>
+          <button type="button" class="track-item" id="abloop-set-b" role="menuitem">设 B 点</button>
+          <button type="button" class="track-item" id="abloop-clear" role="menuitem">清除循环</button>
+        </div>
+      </div>
     </div>
 
     <!-- 快捷键说明面板：复用刮削弹窗骨架，? 键与按钮双入口，Esc/✕/遮罩关闭 -->
@@ -904,6 +915,116 @@
           menuBtn.setAttribute('aria-expanded', 'false');
         });
         dropdown.appendChild(item);
+      });
+
+      // 自包含下拉开关（与其他菜单段同款行为，避免跨段引用局部函数）
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+        menuBtn.setAttribute('aria-expanded', dropdown.classList.contains('open'));
+      });
+      document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target)) {
+          dropdown.classList.remove('open');
+          menuBtn.setAttribute('aria-expanded', 'false');
+        }
+      });
+    })();
+  </script>
+
+  <!-- AB 片段循环：标记 A/B 两点，timeupdate 到 B 自动跳回 A；纯前端会话级状态 -->
+  <script>
+    (() => {
+      const player = document.getElementById('player');
+      const menuBtn = document.getElementById('abloop-menu-btn');
+      const dropdown = document.getElementById('abloop-dropdown');
+      const itemA = document.getElementById('abloop-set-a');
+      const itemB = document.getElementById('abloop-set-b');
+      const itemClear = document.getElementById('abloop-clear');
+      const toast = document.getElementById('shot-toast');
+      if (!player || !menuBtn || !dropdown || !itemA || !itemB || !itemClear || !toast) return;
+
+      const AB_BASE_LABEL = 'AB 循环';
+      // 区间端点（秒），null 表示未标记；仅存闭包，刷新即清空
+      let pointA = null;
+      let pointB = null;
+
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.hidden = false;
+        clearTimeout(showToast._t);
+        showToast._t = setTimeout(() => { toast.hidden = true; }, 2600);
+      }
+      // 秒 → mm:ss，超 1 小时输出 h:mm:ss
+      function fmt(sec) {
+        const total = Math.max(0, Math.floor(sec));
+        const h = Math.floor(total / 3600);
+        const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+        const s = String(total % 60).padStart(2, '0');
+        return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+      }
+      // 视频未加载元数据时 currentTime 恒为 0，无法承担标记语义
+      function notReady() {
+        return player.readyState === 0 || !isFinite(player.currentTime);
+      }
+      // 同步按钮文案与菜单高亮
+      function renderState() {
+        let label = AB_BASE_LABEL;
+        if (pointA != null) label += ' A ' + fmt(pointA);
+        if (pointB != null) label += '-B ' + fmt(pointB);
+        menuBtn.innerHTML = label + ' <span class="caret">▾</span>';
+        itemA.classList.toggle('current', pointA != null);
+        itemB.classList.toggle('current', pointB != null);
+      }
+
+      itemA.addEventListener('click', () => {
+        if (notReady()) {
+          showToast('视频尚未就绪，无法标记 A 点');
+          return;
+        }
+        pointA = player.currentTime;
+        // 重设 A 后若旧 B 不再晚于新 A，丢弃旧 B 保证 A < B
+        if (pointB != null && pointB <= pointA) {
+          pointB = null;
+          showToast('已标记 A 点 ' + fmt(pointA) + '，原 B 点已失效请重新标记');
+        } else {
+          showToast('已标记 A 点 ' + fmt(pointA));
+        }
+        renderState();
+      });
+
+      itemB.addEventListener('click', () => {
+        if (notReady()) {
+          showToast('视频尚未就绪，无法标记 B 点');
+          return;
+        }
+        if (pointA == null) {
+          showToast('请先标记 A 点');
+          return;
+        }
+        if (player.currentTime <= pointA) {
+          showToast('B 点必须晚于 A 点');
+          return;
+        }
+        pointB = player.currentTime;
+        renderState();
+        showToast('已标记 B 点 ' + fmt(pointB) + '，开始循环');
+      });
+
+      itemClear.addEventListener('click', () => {
+        pointA = null;
+        pointB = null;
+        renderState();
+        showToast('已清除 AB 循环');
+      });
+
+      // 循环驱动：跟随 timeupdate 节拍，空状态直接返回；监听器常驻避免反复绑定
+      player.addEventListener('timeupdate', () => {
+        if (pointA == null || pointB == null) return;
+        if (player.currentTime >= pointB) {
+          player.currentTime = pointA;
+          showToast('AB 循环：跳回 A 点');
+        }
       });
 
       // 自包含下拉开关（与其他菜单段同款行为，避免跨段引用局部函数）
