@@ -1630,3 +1630,106 @@ a.share-mgr-name:hover { color: var(--accent); }
   :root { --heat-cell: 11px; --heat-gap: 2px; }
   .heat-month { font-size: 10px; }
 }
+
+/* ===== 标签批量管理：标签行、卡片多选、浮动操作条与批量弹窗 ===== */
+
+/* chips 行：标签组可换行，批量管理按钮固定在右侧 */
+.tag-tabs-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+#batch-mode-btn { flex-shrink: 0; cursor: pointer; }
+
+/* 单个标签 chip 与其重命名/删除小按钮 */
+.tag-chip-wrap { display: inline-flex; align-items: center; gap: 2px; }
+.tag-manage-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease, color .15s ease, background .15s ease;
+}
+.tag-chip-wrap:hover .tag-manage-btn,
+.tag-manage-btn:focus-visible { opacity: 1; }
+.tag-manage-btn:hover { color: var(--text); background: var(--surface-raised); }
+.tag-delete-btn:hover { color: var(--danger); }
+
+/* 卡片左上角的批量勾选框，默认隐藏，进入批量模式后由 JS 取消 hidden */
+.batch-pick {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .65);
+  cursor: pointer;
+}
+.batch-pick[hidden] { display: none; }
+.batch-check { width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent); }
+.batch-target.is-batch-selected .video-card {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* 底部浮动批量操作条 */
+#batch-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  max-width: calc(100vw - 32px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+#batch-bar[hidden] { display: none; }
+#batch-bar-count { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.batch-bar-btn {
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.batch-bar-btn:hover { background: var(--accent); color: #fff; }
+.batch-bar-danger { border-color: var(--danger); color: var(--danger); }
+.batch-bar-danger:hover { background: var(--danger); color: #fff; }
+
+/* 批量弹窗内的下拉与危险按钮 */
+.batch-tag-select { cursor: pointer; }
+.btn-danger {
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-danger:hover { background: var(--danger); color: #fff; }
+
+@media (max-width: 640px) {
+  .tag-tabs-row { flex-direction: column; }
+  #batch-bar { gap: 8px; padding: 8px 12px; bottom: 10px; }
+  .batch-bar-btn { padding: 6px 10px; font-size: 12px; }
+}

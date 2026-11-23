@@ -174,6 +174,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/videos/{id}/tags", s.handleVideoTagList)
 	mux.HandleFunc("PUT /api/v1/videos/{id}/tags", s.handleVideoTagSet)
 	mux.HandleFunc("DELETE /api/v1/videos/{id}/tags/{tagId}", s.handleVideoTagRemove)
+	// 标签全局管理与首页批量操作（仅在启用持久化时可用，否则返回 503）
+	mux.HandleFunc("PATCH /api/v1/tags/{tagId}", s.handleTagRename)
+	mux.HandleFunc("DELETE /api/v1/tags/{tagId}", s.handleTagDelete)
+	mux.HandleFunc("POST /api/v1/tags/batch-set", s.handleBatchTagSet)
+	mux.HandleFunc("POST /api/v1/tags/batch-remove", s.handleBatchTagRemove)
 
 	// 播放列表/合集（仅在启用持久化时可用，否则返回 503）
 	mux.HandleFunc("GET /api/v1/playlists", s.handlePlaylistList)

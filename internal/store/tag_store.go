@@ -14,6 +14,9 @@ const maxTagNameRunes = 32
 // ErrInvalidTag 表示标签名不合法（空串或超长），handler 层据此映射 400。
 var ErrInvalidTag = errors.New("标签名不合法")
 
+// ErrTagConflict 表示重命名后的名字与已有标签（大小写不敏感）重名，handler 层据此映射 409。
+var ErrTagConflict = errors.New("标签名已存在")
+
 // Tag 是一个用户自定义标签；VideoCount 仅在 ListTags 聚合时填充。
 type Tag struct {
 	ID         int64     `json:"id"`
@@ -266,4 +269,170 @@ func scanTagRows(rows *sql.Rows) ([]Tag, error) {
 		out = append(out, tg)
 	}
 	return out, rows.Err()
+}
+
+// dedupeVideoIDs 对视频 ID 去重并保留首次出现顺序，顺带丢弃空串。
+func dedupeVideoIDs(videoIDs []string) []string {
+	seen := make(map[string]bool, len(videoIDs))
+	out := make([]string, 0, len(videoIDs))
+	for _, id := range videoIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// BatchSetVideoTags 在单事务内给一批视频打同一个标签：标签不存在则创建，
+// 已打过的关联幂等跳过。返回新增关联数 added、已存在跳过数 skipped 与去重后的视频总数 total。
+func (s *Store) BatchSetVideoTags(name string, videoIDs []string) (added, skipped, total int, err error) {
+	name, err = normalizeTag(name)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	ids := dedupeVideoIDs(videoIDs)
+	if len(ids) == 0 {
+		return 0, 0, 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	tagID, _, err := ensureTagLocked(tx, name, time.Now().UTC())
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	now := time.Now().UTC()
+	for _, vid := range ids {
+		// 复合主键去重：已存在时 INSERT OR IGNORE 零行，计入 skipped
+		res, err := tx.Exec(
+			`INSERT OR IGNORE INTO video_tag(tag_id, video_id, added_at) VALUES(?, ?, ?)`,
+			tagID, vid, now)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			added++
+		} else {
+			skipped++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, 0, err
+	}
+	return added, skipped, len(ids), nil
+}
+
+// BatchRemoveVideoTags 在单事务内从一批视频上取消某标签，返回实际移除数 removed、
+// 本就无关联的跳过数 skipped 与去重后的视频总数 total。标签不存在返回 ErrNotFound；
+// 取消后标签若无任何视频引用则同事务自动回收。
+func (s *Store) BatchRemoveVideoTags(tagID int64, videoIDs []string) (removed, skipped, total int, err error) {
+	var exists int
+	if err = s.db.QueryRow(`SELECT COUNT(1) FROM tags WHERE id = ?`, tagID).Scan(&exists); err != nil {
+		return 0, 0, 0, err
+	}
+	if exists == 0 {
+		return 0, 0, 0, ErrNotFound
+	}
+	ids := dedupeVideoIDs(videoIDs)
+	if len(ids) == 0 {
+		return 0, 0, 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, vid := range ids {
+		res, err := tx.Exec(
+			`DELETE FROM video_tag WHERE tag_id = ? AND video_id = ?`, tagID, vid)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			removed++
+		} else {
+			skipped++
+		}
+	}
+	// 与 RemoveVideoTag 同口径：引用归零则回收空标签
+	var n int
+	if err := tx.QueryRow(
+		`SELECT COUNT(1) FROM video_tag WHERE tag_id = ?`, tagID).Scan(&n); err != nil {
+		return 0, 0, 0, err
+	}
+	if n == 0 {
+		if _, err := tx.Exec(`DELETE FROM tags WHERE id = ?`, tagID); err != nil {
+			return 0, 0, 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, 0, err
+	}
+	return removed, skipped, len(ids), nil
+}
+
+// RenameTag 重命名标签。标签不存在返回 ErrNotFound；新名字与其他标签（大小写不敏感）
+// 重名时返回 ErrTagConflict，拒绝改动；仅大小写变化视为同名允许更新。
+func (s *Store) RenameTag(tagID int64, name string) (*Tag, error) {
+	name, err := normalizeTag(name)
+	if err != nil {
+		return nil, err
+	}
+	old, err := s.tagByID(tagID)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	// 冲突检查：命中另一个标签才拒绝；命中自身（仅改大小写）放行
+	if other, err := s.TagByName(name); err != nil {
+		return nil, err
+	} else if other != nil && other.ID != old.ID {
+		return nil, ErrTagConflict
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE tags SET name = ? WHERE id = ?`, name, tagID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireRowAffected(res); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.tagByID(tagID)
+}
+
+// DeleteTag 全局删除标签及其全部视频关联；标签不存在返回 ErrNotFound。
+func (s *Store) DeleteTag(tagID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(`DELETE FROM tags WHERE id = ?`, tagID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(`DELETE FROM video_tag WHERE tag_id = ?`, tagID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
