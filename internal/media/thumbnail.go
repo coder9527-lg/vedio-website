@@ -37,6 +37,9 @@ func (t *Thumbnailer) Available() bool {
 	return err == nil
 }
 
+// Dir 返回缩略图缓存根目录。
+func (t *Thumbnailer) Dir() string { return t.dir }
+
 // Path 返回某个视频缩略图的缓存路径。
 func (t *Thumbnailer) Path(videoID string) string {
 	return filepath.Join(t.dir, videoID+".jpg")

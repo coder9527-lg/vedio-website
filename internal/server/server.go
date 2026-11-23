@@ -117,6 +117,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /stats", s.handleStats)
 	// 片库存储分析：纯内存聚合，不依赖 SQLite，未启用持久化也可访问
 	mux.HandleFunc("GET /library/storage", s.handleLibraryStorage)
+	// 缓存健康检查：纯文件扫描与孤儿清理，不依赖 SQLite，未启用持久化也可访问
+	mux.HandleFunc("GET /cache/health", s.handleCacheHealth)
+	mux.HandleFunc("POST /api/v1/cache/thumb/orphans", s.handleCacheThumbCleanup)
+	mux.HandleFunc("POST /api/v1/cache/tmdb/orphans", s.handleCacheTMDBCleanup)
 	// 目录浏览：通配模式不匹配无尾斜杠的裸路径，根入口与子路径需分别注册
 	mux.HandleFunc("GET /browse", s.handleBrowse)
 	mux.HandleFunc("GET /browse/{rest...}", s.handleBrowse)

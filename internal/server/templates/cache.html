@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="stats-heading">🧹 缓存健康检查</h2>
+    <p class="hint">体检缩略图与 TMDB 刮削两类缓存：合规命名但视频已不在库中的为孤儿文件，可一键清理；命名不符合契约的条目只展示、不自动删除。HLS 转码缓存由系统自动回收，不在本页范围。</p>
+
+    {{range $rep := .Reports}}
+    <section class="stats-grid cache-kind-section" data-kind="{{$rep.Kind}}" aria-label="{{$rep.Title}}">
+      <h2 class="shelf-title">{{$rep.Title}}</h2>
+
+      {{if not $rep.Configured}}
+      <div class="empty">
+        <p>该缓存目录未配置。</p>
+      </div>
+      {{else if not $rep.Exists}}
+      <div class="empty">
+        <p>缓存目录尚未创建，暂无内容。</p>
+        <p class="hint">对应功能首次写入时会自动创建目录。</p>
+      </div>
+      {{else}}
+
+      <div class="stat-card">
+        <p class="stat-label">合规条目</p>
+        <p class="stat-value">{{$rep.TotalCount}}</p>
+        <p class="stat-sub">总占用 {{$rep.TotalSizeText}}</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">孤儿条目</p>
+        <p class="stat-value">{{len $rep.Orphans}}</p>
+        <p class="stat-sub">视频已不在库中，可回收 {{$rep.ReclaimText}}</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">缺失条目</p>
+        <p class="stat-value">{{$rep.MissingCount}}</p>
+        <p class="stat-sub">库内视频尚无对应缓存</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">未识别条目</p>
+        <p class="stat-value">{{len $rep.Unidentified}}</p>
+        <p class="stat-sub">命名不符契约，不自动清理</p>
+      </div>
+
+      <section class="dist-section" aria-label="{{$rep.Title}}孤儿条目">
+        <h2 class="shelf-title">孤儿条目</h2>
+        {{if $rep.Orphans}}
+        <p class="hint">保护期内（写入不足 10 分钟）的条目可能正在生成，清理时自动跳过。</p>
+        {{range $rep.Orphans}}
+        <div class="dist-row">
+          <span class="dist-name" title="{{.Name}}">{{.Name}}{{if .IsDir}}/{{end}}</span>
+          <span class="dist-bar"></span>
+          <span class="dist-size">{{.SizeText}} · {{.ModTime}}{{if .Protected}} · <strong>保护期内</strong>{{end}}</span>
+        </div>
+        {{end}}
+        {{if eq $rep.Kind "thumb"}}
+        <button type="button" class="btn-secondary btn-danger cache-clean-btn"
+                data-url="/api/v1/cache/thumb/orphans"
+                data-confirm="确定清理缩略图孤儿文件吗？保护期内的新文件不会删除，此操作不可恢复。">
+          清理孤儿文件（可回收 {{$rep.ReclaimText}}）
+        </button>
+        {{else}}
+        <button type="button" class="btn-secondary btn-danger cache-clean-btn"
+                data-url="/api/v1/cache/tmdb/orphans"
+                data-confirm="确定清理 TMDB 刮削孤儿子目录吗？保护期内的新目录不会删除，此操作不可恢复。">
+          清理孤儿子目录（可回收 {{$rep.ReclaimText}}）
+        </button>
+        {{end}}
+        {{else}}
+        <p class="empty">没有孤儿条目，缓存很干净。</p>
+        {{end}}
+      </section>
+
+      <section class="dist-section" aria-label="{{$rep.Title}}缺失条目">
+        <h2 class="shelf-title">缺失条目（{{$rep.MissingCount}}）</h2>
+        {{if $rep.Missing}}
+        <p class="hint">仅统计展示，不做批量生成：播放或浏览对应视频时会按需自动生成，避免一次性打满 CPU 与磁盘。</p>
+        {{range $rep.Missing}}
+        <div class="dist-row">
+          <span class="dist-name" title="{{.Name}}">{{.Name}}{{if .IsDir}}/{{end}}</span>
+          <span class="dist-bar"></span>
+          <span class="dist-size">待生成</span>
+        </div>
+        {{end}}
+        {{else}}
+        <p class="empty">库内视频均有对应缓存。</p>
+        {{end}}
+      </section>
+
+      <section class="dist-section" aria-label="{{$rep.Title}}未识别条目">
+        <h2 class="shelf-title">未识别条目（{{len $rep.Unidentified}}）</h2>
+        {{if $rep.Unidentified}}
+        <p class="hint">命名不符合缓存契约，可能是手动放入或其他工具的产物，系统不会自动删除，请人工确认后处理。</p>
+        {{range $rep.Unidentified}}
+        <div class="dist-row">
+          <span class="dist-name" title="{{.Name}}">{{.Name}}{{if .IsDir}}/{{end}}</span>
+          <span class="dist-bar"></span>
+          <span class="dist-size">{{.SizeText}} · {{.ModTime}}</span>
+        </div>
+        {{end}}
+        {{else}}
+        <p class="empty">没有未识别条目。</p>
+        {{end}}
+      </section>
+
+      {{end}}
+    </section>
+    {{end}}
+  </main>
+
+  <script>
+    (function () {
+      // 清理按钮：confirm 二次确认 → POST 清理接口 → 成功提示后刷新页面快照
+      document.querySelectorAll('.cache-clean-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (!window.confirm(btn.dataset.confirm)) return;
+          btn.disabled = true;
+          fetch(btn.dataset.url, { method: 'POST' })
+            .then(function (resp) {
+              return resp.json().then(function (data) {
+                if (!resp.ok) throw new Error(data.error || ('请求失败 (' + resp.status + ')'));
+                return data;
+              });
+            })
+            .then(function (data) {
+              window.alert('已清理 ' + data.removed + ' 个条目，回收 ' + data.reclaimed + ' 字节。');
+              window.location.reload();
+            })
+            .catch(function (err) {
+              window.alert('清理失败：' + err.message);
+              btn.disabled = false;
+            });
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
