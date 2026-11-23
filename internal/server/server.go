@@ -169,6 +169,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/videos/{id}/favorite", s.handleFavoriteSet)
 	mux.HandleFunc("GET /api/v1/videos/{id}/favorite", s.handleFavoriteGet)
 
+	// 视频标签（仅在启用持久化时可用，否则返回 503）
+	mux.HandleFunc("GET /api/v1/tags", s.handleTagList)
+	mux.HandleFunc("GET /api/v1/videos/{id}/tags", s.handleVideoTagList)
+	mux.HandleFunc("PUT /api/v1/videos/{id}/tags", s.handleVideoTagSet)
+	mux.HandleFunc("DELETE /api/v1/videos/{id}/tags/{tagId}", s.handleVideoTagRemove)
+
 	// 播放列表/合集（仅在启用持久化时可用，否则返回 503）
 	mux.HandleFunc("GET /api/v1/playlists", s.handlePlaylistList)
 	mux.HandleFunc("POST /api/v1/playlists", s.handlePlaylistCreate)

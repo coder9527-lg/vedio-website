@@ -65,6 +65,18 @@
     {{else if .Metadata.Original}}
     <p class="watch-original-title">{{.Metadata.Original}}</p>
     {{end}}
+    {{if .StoreOn}}
+    <div class="watch-tags" id="watch-tags" data-video-id="{{.Video.ID}}">
+      {{range .Tags}}
+      <span class="watch-tag-chip" data-tag-id="{{.ID}}">{{.Name}}<button type="button" class="tag-remove" data-tag-id="{{.ID}}" aria-label="移除标签 {{.Name}}">×</button></span>
+      {{end}}
+      <input type="text" class="watch-tag-input" id="tag-input" maxlength="32"
+             list="tag-suggestions" placeholder="加标签后回车" aria-label="新增标签">
+      <datalist id="tag-suggestions">
+        {{range .AllTags}}<option value="{{.Name}}"></option>{{end}}
+      </datalist>
+    </div>
+    {{end}}
     {{if .TranscodeOn}}
     <div class="player-modes" role="group" aria-label="转码状态">
       <span class="transcode-status" id="transcode-status" aria-live="polite"></span>
@@ -1779,6 +1791,97 @@
           alert('已新建并加入「' + created.playlist.name + '」');
         } catch (err) {
           alert('创建失败: ' + err.message);
+        }
+      });
+    })();
+  </script>
+  {{end}}
+
+  {{if .StoreOn}}
+  <script>
+    // 标签管理：回车新建/打标（PUT，幂等），点 × 取消（DELETE），成功后局部重绘 chip
+    (() => {
+      const box = document.getElementById('watch-tags');
+      if (!box) return;
+      const videoId = box.dataset.videoId;
+      const input = document.getElementById('tag-input');
+      const datalist = document.getElementById('tag-suggestions');
+
+      async function tagFetch(url, options) {
+        const res = await fetch(url, options);
+        if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+        if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); throw new Error('503'); }
+        if (!res.ok) {
+          let msg = 'HTTP ' + res.status;
+          try { const d = await res.json(); if (d.error) msg = d.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        return res.status === 204 ? null : res.json();
+      }
+
+      // 用服务端返回的最新标签集合重绘 chip，同时刷新自动补全候选
+      function renderChips(tags, allTags) {
+        box.querySelectorAll('.watch-tag-chip').forEach((el) => el.remove());
+        tags.forEach((tg) => {
+          const chip = document.createElement('span');
+          chip.className = 'watch-tag-chip';
+          chip.dataset.tagId = tg.id;
+          chip.textContent = tg.name + ' ';
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'tag-remove';
+          btn.dataset.tagId = tg.id;
+          btn.setAttribute('aria-label', '移除标签 ' + tg.name);
+          btn.textContent = '×';
+          chip.appendChild(btn);
+          box.insertBefore(chip, input);
+        });
+        if (allTags) {
+          datalist.textContent = '';
+          allTags.forEach((tg) => {
+            const opt = document.createElement('option');
+            opt.value = tg.name;
+            datalist.appendChild(opt);
+          });
+        }
+      }
+
+      box.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.tag-remove');
+        if (!btn) return;
+        const tagId = btn.dataset.tagId;
+        try {
+          await tagFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/tags/' + encodeURIComponent(tagId),
+            { method: 'DELETE' });
+          const [mine, all] = await Promise.all([
+            tagFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/tags'),
+            tagFetch('/api/v1/tags')
+          ]);
+          renderChips(mine.tags, all.tags);
+        } catch (err) {
+          if (err.message !== '未登录' && err.message !== '503') alert('移除失败: ' + err.message);
+        }
+      });
+
+      input.addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const name = input.value.trim();
+        if (!name) return;
+        try {
+          await tagFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/tags', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+          });
+          input.value = '';
+          const [mine, all] = await Promise.all([
+            tagFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/tags'),
+            tagFetch('/api/v1/tags')
+          ]);
+          renderChips(mine.tags, all.tags);
+        } catch (err) {
+          if (err.message !== '未登录' && err.message !== '503') alert('打标失败: ' + err.message);
         }
       });
     })();

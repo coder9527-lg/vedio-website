@@ -171,6 +171,62 @@ button:disabled { opacity: .6; cursor: wait; }
   font-size: 13px;
   white-space: nowrap;
 }
+/* 用户标签行：用虚线边框与刮削类型 chips 做视觉区分 */
+.tag-chip { border-style: dashed; }
+.tag-chip-count {
+  margin-left: 5px;
+  font-size: 11px;
+  opacity: .7;
+}
+/* 卡片上的用户小标签 */
+.card-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.card-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary, var(--text));
+  background: var(--hover-bg, rgba(127,127,127,.08));
+}
+/* 播放页标签管理区 */
+.watch-tags { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.watch-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: var(--card-bg);
+}
+.watch-tag-chip button {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  opacity: .65;
+}
+.watch-tag-chip button:hover { opacity: 1; color: #e5484d; }
+.watch-tag-input {
+  padding: 5px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  min-width: 140px;
+}
 
 .video-grid {
   display: grid;

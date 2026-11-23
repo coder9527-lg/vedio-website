@@ -40,7 +40,7 @@ var tmplFuncs = template.FuncMap{
 	"joinStrings": func(items []string, sep string) string {
 		return strings.Join(items, sep)
 	},
-	// indexURL 生成保持 type/view/sort/q/genre 五元组正交的首页链接；
+	// indexURL 生成保持 type/view/sort/q/genre/tag 六元组正交的首页链接；
 	// overrides 以 key/value 成对传入覆盖项，空值表示从 URL 中移除该参数。
 	"indexURL": func(current map[string]string, overrides ...string) string {
 		params := url.Values{}

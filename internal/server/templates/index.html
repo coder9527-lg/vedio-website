@@ -113,6 +113,15 @@
     </nav>
     {{end}}
 
+    {{if and .StoreOn .Tags (ne .View "playlists")}}
+    <nav class="view-tabs genre-tabs" aria-label="用户标签筛选">
+      <a href="{{indexURL .Params "tag" ""}}" class="tab tab-chip tag-chip {{if eq .Tag ""}}active{{end}}">全部标签</a>
+      {{range .Tags}}
+      <a href="{{indexURL $.Params "tag" .Name}}" class="tab tab-chip tag-chip {{if eq $.Tag .Name}}active{{end}}">{{.Name}}<span class="tag-chip-count">{{.VideoCount}}</span></a>
+      {{end}}
+    </nav>
+    {{end}}
+
     {{if and .StoreOn (eq .View "playlists")}}
     <section class="pl-panel">
       <div class="pl-panel-head">
@@ -259,6 +268,13 @@
             {{end}}
             {{if hasProgress $p.Position $p.Duration}}
             <p class="resume-hint">▶ 看到 {{formatDuration $p.Position}}{{if gt $p.Duration 0.0}} / {{formatDuration $p.Duration}}{{end}}</p>
+            {{end}}
+            {{if index $.State.Tags $v.ID}}
+            <div class="card-tag-row">
+              {{range index $.State.Tags $v.ID}}
+              <span class="card-tag">{{.Name}}</span>
+              {{end}}
+            </div>
             {{end}}
           </div>
         </a>

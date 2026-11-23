@@ -42,7 +42,9 @@ type indexData struct {
 	Type      string                  // all | movie | show
 	Genre     string                  // 当前类型筛选（空=全部）
 	Genres    []string                // 全库可用类型标签（chips 数据源）
-	Params    map[string]string       // 当前五元组快照，供 indexURL 保持筛选正交
+	Tag       string                  // 当前标签筛选（标签名，空=全部）
+	Tags      []store.Tag             // 全库用户标签（chips 数据源，含引用计数）
+	Params    map[string]string       // 当前六元组快照，供 indexURL 保持筛选正交
 	StoreOn   bool                    // 是否启用持久化
 	ScrapeOn  bool                    // 是否启用 TMDB 在线刮削
 	Playlists []store.PlaylistSummary // view=playlists 时的列表摘要
@@ -76,15 +78,17 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	typeFilter := normalizeTypeFilter(q.Get("type"))
 	genre := strings.TrimSpace(q.Get("genre"))
+	tag := strings.TrimSpace(q.Get("tag"))
 
 	query := media.Query{Keyword: keyword, Sort: sortVal, Genre: genre}
 	state := s.loadVideoState()
 	switch view {
 	case "playlists":
-		// 播放列表视图不按视频卡片过滤，忽略 type/q/sort/genre，模板渲染专属面板
+		// 播放列表视图不按视频卡片过滤，忽略 type/q/sort/genre/tag，模板渲染专属面板
 		query.IDs = nil
 		query.Genre = ""
 		genre = ""
+		tag = ""
 	case "favorites":
 		if len(state.Favs) == 0 {
 			query.IDs = map[string]bool{} // 强制空结果
@@ -97,6 +101,19 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			ids[id] = true
 		}
 		query.IDs = ids
+	}
+	// 标签筛选：把标签名解析为视频 ID 集合后注入独立字段，与 view/type/genre/q 正交。
+	// TagOn 标记筛选已激活：标签名不存在时 TagIDs 为空集，仍强制零结果。
+	if s.storeEnabled() && tag != "" {
+		query.TagOn = true
+		query.TagIDs = map[string]bool{}
+		if tg, err := s.store.TagByName(tag); err == nil && tg != nil {
+			if set, err := s.store.TagVideoSet(tg.ID); err == nil {
+				query.TagIDs = set
+			} else {
+				log.Printf("解析标签视频集合失败: %v", err)
+			}
+		}
 	}
 
 	videos := s.library.Query(query)
@@ -112,6 +129,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		playlists, _ = s.store.ListPlaylists()
 	}
 
+	// 标签 chips 仅在启用持久化时查询，失败留空由模板隐藏整行
+	var tags []store.Tag
+	if s.storeEnabled() {
+		tags, _ = s.store.ListTags()
+	}
 	data := indexData{
 		basePage: basePage{Title: "我的视频库", AuthEnabled: s.authEnabled()},
 		Videos:   videos,
@@ -126,19 +148,22 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Type:     typeFilter,
 		Genre:    genre,
 		Genres:   s.library.AllGenres(),
+		Tag:      tag,
+		Tags:     tags,
 		Params: map[string]string{
 			"type":  typeFilter,
 			"view":  view,
 			"sort":  sortVal,
 			"q":     keyword,
 			"genre": genre,
+			"tag":   tag,
 		},
 		StoreOn:   s.storeEnabled(),
 		ScrapeOn:  s.scraperEnabled(),
 		Playlists: playlists,
 	}
-	// 横向行只在干净的默认视图展示：全部类型、全部视图、无搜索、无排序，避免与筛选结果语义冲突
-	if s.storeEnabled() && view == "all" && typeFilter == "all" && keyword == "" && sortVal == "" {
+	// 横向行只在干净的默认视图展示：全部类型、全部视图、无搜索、无排序、无筛选，避免与筛选结果语义冲突
+	if s.storeEnabled() && view == "all" && typeFilter == "all" && keyword == "" && sortVal == "" && genre == "" && tag == "" {
 		data.ContinueCards = s.buildContinueShelf()
 		data.RecentCards = s.buildRecentShelf()
 	}
@@ -207,6 +232,8 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	// 视频书签（同上，仅 watch 页点查；失败降级为空列表，不阻断播放页）
 	var bookmarks []store.Bookmark
 	var bookmarksJSON template.JS
+	// 当前视频标签与全库标签（后者供输入框 datalist 自动补全）
+	var videoTags, allTags []store.Tag
 	if s.storeEnabled() {
 		got, err := s.store.GetSkipSetting(v.ID)
 		if err != nil {
@@ -222,6 +249,16 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		}
 		if raw, mErr := json.Marshal(bookmarks); mErr == nil {
 			bookmarksJSON = template.JS(raw)
+		}
+		videoTags, err = s.store.VideoTags(v.ID)
+		if err != nil {
+			log.Printf("读取视频标签失败: %v", err)
+			videoTags = nil
+		}
+		allTags, err = s.store.ListTags()
+		if err != nil {
+			log.Printf("读取标签列表失败: %v", err)
+			allTags = nil
 		}
 	}
 	subtitles := s.library.Subtitles(v.ID)
@@ -289,6 +326,8 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		Skip           *store.SkipSetting
 		Bookmarks      []store.Bookmark
 		BookmarksJSON  template.JS
+		Tags           []store.Tag // 当前视频的标签
+		AllTags        []store.Tag // 全库标签，供输入框自动补全
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
@@ -307,6 +346,8 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		Skip:           skip,
 		Bookmarks:      bookmarks,
 		BookmarksJSON:  bookmarksJSON,
+		Tags:           videoTags,
+		AllTags:        allTags,
 	})
 }
 

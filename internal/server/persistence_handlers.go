@@ -233,15 +233,17 @@ func (s *Server) handleFavoriteList(w http.ResponseWriter, r *http.Request) {
 type videoState struct {
 	Progress map[string]store.Progress
 	Favs     map[string]bool
-	Members  map[string][]string // 视频 ID → 所属播放列表 ID 列表
+	Members  map[string][]string    // 视频 ID → 所属播放列表 ID 列表
+	Tags     map[string][]store.Tag // 视频 ID → 标签列表
 }
 
-// loadVideoState 一次性读取进度、收藏与播放列表成员关系；未启用持久化时返回零值。
+// loadVideoState 一次性读取进度、收藏、播放列表成员关系与标签；未启用持久化时返回零值。
 func (s *Server) loadVideoState() videoState {
 	st := videoState{
 		Progress: map[string]store.Progress{},
 		Favs:     map[string]bool{},
 		Members:  map[string][]string{},
+		Tags:     map[string][]store.Tag{},
 	}
 	if !s.storeEnabled() {
 		return st
@@ -260,6 +262,11 @@ func (s *Server) loadVideoState() videoState {
 		st.Members = m
 	} else {
 		log.Printf("读取播放列表成员关系失败: %v", err)
+	}
+	if m, err := s.store.VideoTagsMap(); err == nil {
+		st.Tags = m
+	} else {
+		log.Printf("读取视频标签失败: %v", err)
 	}
 	return st
 }

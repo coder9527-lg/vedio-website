@@ -142,6 +142,8 @@ type Query struct {
 	Keyword string
 	Sort    string
 	IDs     map[string]bool // 非空时只返回这些 ID（用于收藏/继续观看等视图）
+	TagIDs  map[string]bool // 标签命中的视频 ID 集合
+	TagOn   bool            // 是否启用标签筛选；为 true 时即使 TagIDs 为空集也强制零结果
 	Genre   string          // 非空时只返回元信息 Genres 含该类型的视频（内存过滤）
 	Limit   int             // <= 0 表示不限制
 }
@@ -160,6 +162,9 @@ func (l *Library) Query(q Query) []*Video {
 	out := make([]*Video, 0, len(l.videos))
 	for _, v := range l.videos {
 		if len(q.IDs) > 0 && !q.IDs[v.ID] {
+			continue
+		}
+		if q.TagOn && !q.TagIDs[v.ID] {
 			continue
 		}
 		if keyword != "" && !l.videoMatchesKeywordLocked(v, keyword) {

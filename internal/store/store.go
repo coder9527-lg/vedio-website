@@ -152,6 +152,20 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     created_at TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bookmarks_video ON bookmarks(video_id, position);
+CREATE TABLE IF NOT EXISTS tags (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL
+);
+-- 唯一约束建在小写名上：展示保留原始大小写，但同名不同大小写视为同一标签
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name ON tags(LOWER(name));
+CREATE TABLE IF NOT EXISTS video_tag (
+    tag_id   INTEGER NOT NULL,
+    video_id TEXT    NOT NULL,
+    added_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (tag_id, video_id)
+);
+CREATE INDEX IF NOT EXISTS idx_video_tag_video ON video_tag(video_id);
 `)
 	if err != nil {
 		return err
@@ -567,6 +581,14 @@ func (s *Store) Prune(existing map[string]bool) error {
 			return err
 		}
 		_, err = s.db.Exec(`DELETE FROM bookmarks`)
+		if err != nil {
+			return err
+		}
+		// 标签关联随视频一并清空，再回收失去任何关联的空标签
+		if _, err = s.db.Exec(`DELETE FROM video_tag`); err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM video_tag)`)
 		return err
 	}
 
@@ -593,7 +615,16 @@ func (s *Store) Prune(existing map[string]bool) error {
 		`DELETE FROM skip_settings WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(
+		`DELETE FROM bookmarks WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
+		return err
+	}
+	// 清理悬空视频的标签关联，再回收不再被任何视频引用的空标签
+	if _, err := s.db.Exec(
+		`DELETE FROM video_tag WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(
-		`DELETE FROM bookmarks WHERE video_id NOT IN (`+inClause+`)`, args...)
+		`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM video_tag)`)
 	return err
 }
