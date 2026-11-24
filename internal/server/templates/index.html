@@ -137,7 +137,12 @@
     <section class="pl-panel">
       <div class="pl-panel-head">
         <h2 class="pl-panel-title">我的播放列表</h2>
-        <button type="button" class="pl-create-btn" id="pl-create-top">＋ 新建播放列表</button>
+        <div class="pl-head-actions">
+          <a class="btn-secondary pl-io-btn" href="/api/v1/export/playlists.json" download>⬇ 导出</a>
+          <button type="button" class="btn-secondary pl-io-btn" id="pl-import-btn">⬆ 导入</button>
+          <button type="button" class="pl-create-btn" id="pl-create-top">＋ 新建播放列表</button>
+          <input type="file" id="pl-import-file" accept="application/json,.json" hidden>
+        </div>
       </div>
       {{if .Playlists}}
       <div class="pl-grid">
@@ -629,6 +634,26 @@
       }
     }
     document.getElementById('pl-create-top')?.addEventListener('click', plPromptCreate);
+
+    // ----- 导入 / 导出：导出走 <a download> 零 JS；导入用隐藏 file input + FormData -----
+    const plImportFile = document.getElementById('pl-import-file');
+    document.getElementById('pl-import-btn')?.addEventListener('click', () => plImportFile?.click());
+    plImportFile?.addEventListener('change', async () => {
+      const file = plImportFile.files && plImportFile.files[0];
+      plImportFile.value = ''; // 清空选择，允许重复导入同一个文件
+      if (!file) return;
+      if (!confirm('导入将新建播放列表，不会修改或覆盖现有列表。确认继续？')) return;
+      const fd = new FormData();
+      fd.append('file', file); // 不手动设 Content-Type，浏览器自动带 multipart boundary
+      try {
+        const r = await plFetch('/api/v1/import/playlists', { method: 'POST', body: fd });
+        alert('导入完成：新建 ' + r.created + ' 个列表，加入 ' + r.addedItems +
+              ' 个视频，跳过 ' + r.skippedItems + ' 个本机不存在的视频。');
+        location.reload();
+      } catch (err) {
+        alert('导入失败: ' + err.message);
+      }
+    });
 
     // ----- Modal A：管理 -----
     async function plOpenManage(pid) {

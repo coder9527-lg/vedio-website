@@ -195,6 +195,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/playlists/{id}/items/{videoId}/move", s.handlePlaylistMoveItem)
 	mux.HandleFunc("POST /api/v1/shows/{id}/playlist", s.handleShowAddToPlaylist)
 	mux.HandleFunc("GET /api/v1/videos/{id}/playlists", s.handleVideoPlaylists)
+	// 播放列表备份迁移：导出为 JSON 文件、从 JSON 新建导入（仅在启用持久化时可用，否则 503）
+	mux.HandleFunc("GET /api/v1/export/playlists.json", s.handleExportPlaylists)
+	mux.HandleFunc("POST /api/v1/import/playlists", s.handleImportPlaylists)
 	mux.HandleFunc("GET /stream/{id}", s.handleStream)
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)
