@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container" data-library-total="{{.LibraryTotal}}" data-library-empty="{{if .LibraryEmpty}}1{{else}}0{{end}}">
+    <h2 class="stats-heading">🩺 数据健康检查</h2>
+    <p class="hint">体检 SQLite 中指向「媒体库已不存在视频」的孤儿记录，按表分区展示并由你手动确认清理。匿名分享链接不在本页范围：失效分享在访问时自然失效，且文件可能只是临时挪走。所有清理均不可恢复，请先确认。</p>
+
+    {{if .LibraryEmpty}}
+    <div class="dh-warning" role="alert">
+      ⚠️ 媒体库当前为空（扫描到 0 个视频）。此状态下各表全部记录都会被判定为孤儿，清理将移除对应表的全部数据记录，请谨慎操作。
+    </div>
+    {{end}}
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <p class="stat-label">媒体库视频</p>
+        <p class="stat-value">{{.LibraryTotal}}</p>
+        <p class="stat-sub">当前磁盘扫描到的视频总数</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">孤儿记录总数</p>
+        <p class="stat-value">{{.TotalOrphans}}</p>
+        <p class="stat-sub">七张数据表中的悬空记录合计</p>
+      </div>
+    </div>
+
+    <section class="dist-section dh-overview" aria-label="一键清理">
+      <h2 class="shelf-title">一键清理</h2>
+      <p class="hint">在单个数据库事务内清理全部七张表的孤儿记录，要么全部成功要么整体不动；播放列表表头与分享链接不会被删除。</p>
+      <button type="button" class="btn-secondary btn-danger" id="dh-clean-all"
+              data-total="{{.TotalOrphans}}" {{if eq .TotalOrphans 0}}disabled{{end}}>
+        一键清理全部孤儿记录（{{.TotalOrphans}} 条）
+      </button>
+    </section>
+
+    {{range $sec := .Sections}}
+    <section class="dist-section dh-section" data-section="{{$sec.Key}}" aria-label="{{$sec.Title}}">
+      <h2 class="shelf-title">{{$sec.Title}}（{{$sec.Count}}）</h2>
+      {{if $sec.Hint}}<p class="hint">{{$sec.Hint}}</p>{{end}}
+      {{if $sec.SampleIDs}}
+      <div class="dh-sample-ids" aria-label="悬空视频 ID 样例">
+        <span class="hint">悬空 video_id 样例（最多 5 个）：</span>
+        {{range $sec.SampleIDs}}<code class="dh-sample-id" title="{{.}}">{{.}}</code>{{end}}
+      </div>
+      {{end}}
+      {{if eq $sec.Count 0}}
+      <p class="empty">没有孤儿记录，数据很干净。</p>
+      <button type="button" class="btn-secondary btn-danger dh-clean-btn"
+              data-table="{{$sec.Key}}" data-count="{{$sec.Count}}" data-title="{{$sec.Title}}" disabled>
+        清理本表孤儿
+      </button>
+      {{else}}
+      <button type="button" class="btn-secondary btn-danger dh-clean-btn"
+              data-table="{{$sec.Key}}" data-count="{{$sec.Count}}" data-title="{{$sec.Title}}">
+        清理本表孤儿（{{$sec.Count}} 条）
+      </button>
+      {{end}}
+    </section>
+    {{end}}
+  </main>
+
+  <script>
+    (function () {
+      var main = document.querySelector('.container');
+      var libraryEmpty = main.dataset.libraryEmpty === '1';
+
+      // 统一 POST JSON：401 回登录页，其余非 2xx 抛出后端 error 文案
+      function postJSON(url, body) {
+        return fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body || {})
+        }).then(function (resp) {
+          if (resp.status === 401) {
+            window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+            throw new Error('未登录');
+          }
+          return resp.json().then(function (data) {
+            if (!resp.ok) throw new Error(data.error || ('请求失败 (' + resp.status + ')'));
+            return data;
+          });
+        });
+      }
+
+      // 按表清理：confirm 文案随空库状态切换
+      document.querySelectorAll('.dh-clean-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var n = btn.dataset.count;
+          var msg = libraryEmpty
+            ? '媒体库为空，将清空「' + btn.dataset.title + '」表的全部 ' + n + ' 条记录，是否继续？此操作不可恢复。'
+            : '确定清理「' + btn.dataset.title + '」的 ' + n + ' 条孤儿记录吗？此操作不可恢复。';
+          if (!window.confirm(msg)) return;
+          btn.disabled = true;
+          postJSON('/api/v1/data-health/clean', { table: btn.dataset.table })
+            .then(function (data) {
+              window.alert('已清理 ' + data.removed + ' 条「' + btn.dataset.title + '」孤儿记录。');
+              window.location.reload();
+            })
+            .catch(function (err) {
+              window.alert('清理失败：' + err.message);
+              btn.disabled = false;
+            });
+        });
+      });
+
+      // 一键清理：单事务全表清理，强提示
+      var allBtn = document.getElementById('dh-clean-all');
+      allBtn.addEventListener('click', function () {
+        var n = allBtn.dataset.total;
+        var msg = libraryEmpty
+          ? '媒体库为空，将清空七张数据表的全部记录（播放列表表头保留），是否继续？此操作不可恢复。'
+          : '将在单事务内清理全部七类共 ' + n + ' 条孤儿记录，是否继续？此操作不可恢复。';
+        if (!window.confirm(msg)) return;
+        allBtn.disabled = true;
+        postJSON('/api/v1/data-health/clean-all', {})
+          .then(function (data) {
+            window.alert('一键清理完成，共删除 ' + data.removed + ' 条孤儿记录。');
+            window.location.reload();
+          })
+          .catch(function (err) {
+            window.alert('清理失败：' + err.message);
+            allBtn.disabled = false;
+          });
+      });
+    })();
+  </script>
+</body>
+</html>

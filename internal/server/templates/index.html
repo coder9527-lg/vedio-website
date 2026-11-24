@@ -100,6 +100,7 @@
           <a class="nav-dropdown-item" role="menuitem" href="/review">🎬 年度回顾</a>
           <a class="nav-dropdown-item" role="menuitem" href="/history">🕘 观看历史</a>
           <a class="nav-dropdown-item" role="menuitem" href="/shares">🔗 分享管理</a>
+          <a class="nav-dropdown-item" role="menuitem" href="/data/health">🩺 数据健康检查</a>
           {{end}}
         </div>
       </div>
@@ -343,6 +344,11 @@
           <button type="button" class="btn-danger pl-delete-btn" id="pl-delete-btn">删除列表</button>
         </div>
         <p class="pl-hint" id="pl-manage-hint"></p>
+        <div class="pl-filter-bar">
+          <input type="search" class="pl-filter-input" id="pl-filter-input"
+                 placeholder="筛选本列表内视频…" aria-label="筛选列表内视频" autocomplete="off">
+          <span class="pl-filter-count" id="pl-filter-count" aria-live="polite"></span>
+        </div>
         <div class="pl-item-list" id="pl-item-list"></div>
       </div>
     </div>
@@ -576,9 +582,14 @@
     const plRenameInput = document.getElementById('pl-rename-input');
     const plPickList = document.getElementById('pl-pick-list');
     const plNewName = document.getElementById('pl-new-name');
+    const plFilterInput = document.getElementById('pl-filter-input');
+    const plFilterCount = document.getElementById('pl-filter-count');
     // 管理弹窗当前列表；加入弹窗的目标上下文（单视频或整剧）
     let plCurrentPid = null;
     let plAddTarget = null;
+    // 当前管理弹窗内的全量条目与筛选关键词；移动/移除后重新拉取仍保持筛选态
+    let plCurrentItems = [];
+    let plFilterKeyword = '';
 
     async function plFetch(url, options) {
       const res = await fetch(url, options);
@@ -660,6 +671,10 @@
       plCurrentPid = pid;
       plItemList.textContent = '加载中…';
       plManageHint.textContent = '';
+      // 每次打开重置筛选，避免上次关键词残留
+      plFilterKeyword = '';
+      if (plFilterInput) plFilterInput.value = '';
+      if (plFilterCount) plFilterCount.textContent = '';
       plOpen(plManageModal);
       try {
         const data = await plFetch('/api/v1/playlists/' + encodeURIComponent(pid));
@@ -670,16 +685,42 @@
       }
     }
 
+    // plFilteredItems 按关键词（不区分大小写、匹配视频名或 videoId）过滤当前条目
+    function plFilteredItems() {
+      const kw = plFilterKeyword.trim().toLowerCase();
+      if (!kw) return plCurrentItems;
+      return plCurrentItems.filter((item) => {
+        const v = item.video;
+        const name = v && v.name ? v.name : '';
+        return name.toLowerCase().includes(kw) ||
+          String(item.videoId).toLowerCase().includes(kw);
+      });
+    }
+
     function plRenderItems(items) {
+      plCurrentItems = items;
+      const visible = plFilteredItems();
       plItemList.textContent = '';
       if (!items.length) {
         const p = document.createElement('p');
         p.className = 'pl-hint';
         p.textContent = '列表还是空的，去视频卡片上点「＋」加入吧。';
         plItemList.appendChild(p);
+        if (plFilterCount) plFilterCount.textContent = '';
         return;
       }
-      items.forEach((item, idx) => {
+      // 有筛选但无命中：给出明确提示，列表本身仍保留全量数据
+      if (!visible.length) {
+        const p = document.createElement('p');
+        p.className = 'pl-hint';
+        p.textContent = '没有匹配「' + plFilterKeyword.trim() + '」的视频。';
+        plItemList.appendChild(p);
+        if (plFilterCount) plFilterCount.textContent = '0 / ' + items.length;
+        return;
+      }
+      visible.forEach((item) => {
+        // 序号按全量列表中的真实位置展示，避免过滤后序号重排误导拖拽排序
+        const idx = items.indexOf(item);
         const row = document.createElement('div');
         row.className = 'pl-item-row';
         row.dataset.videoId = item.videoId;
@@ -718,6 +759,19 @@
         ctrls.append(up, down, del);
         row.appendChild(ctrls);
         plItemList.appendChild(row);
+      });
+      if (plFilterCount) {
+        plFilterCount.textContent = plFilterKeyword.trim()
+          ? visible.length + ' / ' + items.length
+          : '';
+      }
+    }
+
+    // 筛选输入：纯前端实时过滤，不触发任何请求
+    if (plFilterInput) {
+      plFilterInput.addEventListener('input', () => {
+        plFilterKeyword = plFilterInput.value;
+        plRenderItems(plCurrentItems);
       });
     }
 

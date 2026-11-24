@@ -198,6 +198,10 @@ func (s *Server) Handler() http.Handler {
 	// 播放列表备份迁移：导出为 JSON 文件、从 JSON 新建导入（仅在启用持久化时可用，否则 503）
 	mux.HandleFunc("GET /api/v1/export/playlists.json", s.handleExportPlaylists)
 	mux.HandleFunc("POST /api/v1/import/playlists", s.handleImportPlaylists)
+	// 数据健康检查：SQLite 孤儿记录体检与显式按表/一键清理（仅在启用持久化时可用，否则 503）
+	mux.HandleFunc("GET /data/health", s.handleDataHealthPage)
+	mux.HandleFunc("POST /api/v1/data-health/clean", s.handleDataHealthClean)
+	mux.HandleFunc("POST /api/v1/data-health/clean-all", s.handleDataHealthCleanAll)
 	mux.HandleFunc("GET /stream/{id}", s.handleStream)
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /thumb-placeholder.svg", s.handlePlaceholder)

@@ -966,6 +966,31 @@ a.pl-io-btn {
 .pl-item-ctrl { display: flex; gap: 6px; flex-shrink: 0; }
 .pl-ctrl-btn { padding: 5px 10px; font-size: 13px; }
 
+/* 管理弹窗内条目筛选条：纯前端过滤，复用通用输入框配色 */
+.pl-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.pl-filter-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.pl-filter-input:focus { outline: none; border-color: var(--accent); }
+.pl-filter-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 /* 加入弹窗选择列表 */
 .pl-pick-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .pl-pick-row {
@@ -1745,3 +1770,34 @@ a.share-mgr-name:hover { color: var(--accent); }
   #batch-bar { gap: 8px; padding: 8px 12px; bottom: 10px; }
   .batch-bar-btn { padding: 6px 10px; font-size: 12px; }
 }
+
+/* 数据健康检查页：空库警示条与悬空 video_id 样例 */
+.dh-warning {
+  margin: 12px 0 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--danger-border);
+  border-radius: 8px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.dh-sample-ids {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+.dh-sample-id {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  font-size: 12px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dh-section .dh-clean-btn { margin-top: 10px; }

@@ -393,3 +393,22 @@ func TestWatchPlaylistAutoNextContext(t *testing.T) {
 		t.Fatal("回退的剧集连播 URL 不应带 playlist 参数")
 	}
 }
+
+// TestPlaylistManageFilterInjection 管理弹窗渲染条目筛选条及前端筛选接线标记。
+// 仅校验专属 id/class 是否出现在 HTML 中，实时过滤交互属浏览器范畴，不在此覆盖。
+func TestPlaylistManageFilterInjection(t *testing.T) {
+	_, ts := newPlaylistTestServer(t)
+	code, html := getHTML(t, ts, "/")
+	if code != http.StatusOK {
+		t.Fatalf("首页状态码 = %d", code)
+	}
+	containsAll(t, html,
+		`class="pl-filter-bar"`,
+		`id="pl-filter-input"`,
+		`id="pl-filter-count"`,
+		// 前端接线标记：缓存全量条目与关键词状态、纯前端过滤函数
+		`plCurrentItems`,
+		`plFilterKeyword`,
+		`plFilteredItems`,
+	)
+}
