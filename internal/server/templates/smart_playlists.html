@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container" data-smart-page>
+    {{if not .Detail}}
+    <!-- 中心页：内置规则 + 用户标签规则，全部实时计数、点击进入详情 -->
+    <h2 class="section-title">智能清单</h2>
+    <p class="hint">清单内容按观看进度、收藏与标签实时计算，无需手动维护。</p>
+    <div class="pl-grid" data-smart-rules>
+      {{range .Rules}}
+      <a class="pl-card smart-rule-card" href="{{.URL}}" data-rule="{{.Key}}">
+        <div class="pl-card-body">
+          <h3 class="pl-card-name">{{.Name}}</h3>
+          <p class="pl-card-meta">{{.Count}} 个视频 · {{.Description}}</p>
+        </div>
+      </a>
+      {{end}}
+    </div>
+    {{if not .Rules}}
+    <div class="empty"><p>暂无可展示的智能清单。</p></div>
+    {{end}}
+
+    {{else}}
+    <!-- 规则详情：平铺视频卡片，与搜索页同一套网格样式 -->
+    <nav class="view-tabs" aria-label="返回">
+      <a href="/smart" class="tab">← 全部智能清单</a>
+    </nav>
+    <h2 class="section-title" data-smart-detail-title>{{.Rule.Name}}</h2>
+    <p class="hint">{{.Rule.Description}} · 共 {{len .Videos}} 个视频</p>
+
+    {{if .Videos}}
+    <div class="video-grid">
+      {{range .Videos}}
+      {{$v := .}}
+      {{$md := index $.Metadata $v.ID}}
+      {{$p := index $.State.Progress $v.ID}}
+      <div class="video-card-wrap">
+        <a class="video-card" href="/watch/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and $md $md.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+            {{if index $.State.Favs $v.ID}}<span class="fav-badge" title="已收藏">⭐</span>{{end}}
+            {{if hasProgress $p.Position $p.Duration}}
+            <div class="progress-bar" title="已看到 {{formatDuration $p.Position}} / {{formatDuration $p.Duration}}">
+              <div class="progress-fill" style="width: {{progressPercent $p.Position $p.Duration}}%"></div>
+            </div>
+            {{end}}
+          </div>
+          <div class="meta">
+            {{if and $md $md.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$md.Title}}{{if $md.Year}} <span class="meta-year">({{$md.Year}})</span>{{end}}</h2>
+            {{if ne $md.Title $v.Name}}<p class="video-original-name">{{$v.Name}}</p>{{end}}
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+            <p class="video-path">{{$v.RelPath}}</p>
+            {{if hasProgress $p.Position $p.Duration}}
+            <p class="resume-hint">▶ 看到 {{formatDuration $p.Position}}{{if gt $p.Duration 0.0}} / {{formatDuration $p.Duration}}{{end}}</p>
+            {{end}}
+          </div>
+        </a>
+        {{if $.StoreOn}}
+        <button type="button" class="fav-toggle {{if index $.State.Favs $v.ID}}is-fav{{end}}"
+                data-id="{{$v.ID}}" data-fav="{{if index $.State.Favs $v.ID}}true{{else}}false{{end}}"
+                title="{{if index $.State.Favs $v.ID}}取消收藏{{else}}收藏{{end}}"
+                aria-label="收藏切换">☆</button>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty" data-smart-empty>
+      <p>该清单当前没有视频。</p>
+    </div>
+    {{end}}
+    {{end}}
+  </main>
+  {{if and .Detail .StoreOn}}
+  <script>
+    // 详情页卡片收藏切换：与搜索页同口径，直接调 favorite API
+    document.querySelectorAll('.fav-toggle').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const id = btn.dataset.id;
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/v1/videos/' + id + '/favorite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          if (res.status === 401) { location.href = '/login'; return; }
+          if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); return; }
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          btn.dataset.fav = String(data.favorite);
+          btn.classList.toggle('is-fav', data.favorite);
+          btn.title = data.favorite ? '取消收藏' : '收藏';
+        } catch (err) {
+          alert('收藏操作失败: ' + err);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  </script>
+  {{end}}
+</body>
+</html>

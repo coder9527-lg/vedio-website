@@ -33,6 +33,7 @@
     <h1>🎬 {{.Title}}</h1>
     <div class="header-actions">
       <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      <a class="btn-secondary" href="/smart">智能清单</a>
       <span class="count">共 {{.Total}} 个视频</span>
       {{if .ScrapeOn}}
       <button id="bulk-scrape-btn" type="button" class="btn-secondary">批量刮削</button>
@@ -139,6 +140,7 @@
       <div class="pl-panel-head">
         <h2 class="pl-panel-title">我的播放列表</h2>
         <div class="pl-head-actions">
+          <a class="btn-secondary pl-io-btn" href="/smart">智能清单</a>
           <a class="btn-secondary pl-io-btn" href="/api/v1/export/playlists.json" download>⬇ 导出</a>
           <button type="button" class="btn-secondary pl-io-btn" id="pl-import-btn">⬆ 导入</button>
           <button type="button" class="pl-create-btn" id="pl-create-top">＋ 新建播放列表</button>

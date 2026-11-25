@@ -125,6 +125,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /browse", s.handleBrowse)
 	mux.HandleFunc("GET /browse/{rest...}", s.handleBrowse)
 	mux.HandleFunc("GET /search", s.handleSearch)
+	// 智能清单：无状态实时规则视图，中心页与规则详情分开注册
+	mux.HandleFunc("GET /smart", s.handleSmartPlaylists)
+	mux.HandleFunc("GET /smart/{rule}", s.handleSmartPlaylistDetail)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("GET /review", s.handleReview)
 	mux.HandleFunc("POST /history/clear", s.handleClearHistory)

@@ -867,6 +867,9 @@ a.pl-io-btn {
   outline: none;
 }
 .pl-card-body { min-width: 0; }
+/* 智能清单中心页：规则卡片是链接，复用 pl-card 视觉并保证整卡可点 */
+a.smart-rule-card { color: inherit; text-decoration: none; justify-content: space-between; }
+.smart-rule-card .pl-card-meta { margin: 0; color: var(--muted); font-size: 13px; }
 .pl-card-name {
   margin: 0 0 6px;
   font-size: 16px;
