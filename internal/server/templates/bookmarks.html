@@ -48,38 +48,70 @@
       <p>未启用持久化（DB_PATH 未配置），暂无书签。</p>
       <p class="hint">配置数据库路径后，播放页打点的书签会自动汇总在此，点击即可跳转到对应时间点。</p>
     </div>
-    {{else if .Groups}}
+    {{else if .RecordsJSON}}
+
+    <!-- 工具栏：搜索 / 视图切换 / 排序 / 导出，全部前端完成、不额外请求后端 -->
+    <div class="bm-toolbar" data-bookmarks-toolbar>
+      <input type="search" class="bm-search-input" data-bm-search
+             placeholder="搜索备注或视频名…" aria-label="搜索书签">
+      <div class="bm-view-switch" role="group" aria-label="视图切换">
+        <button type="button" class="bm-view-btn is-active" data-bm-view="group" aria-pressed="true">分组</button>
+        <button type="button" class="bm-view-btn" data-bm-view="flat" aria-pressed="false">平铺</button>
+      </div>
+      <label class="bm-sort-label">排序
+        <select class="bm-sort-select" data-bm-sort aria-label="书签排序">
+          <option value="recent">最近打点</option>
+          <option value="position">时间点先后</option>
+        </select>
+      </label>
+      <div class="bm-export-wrap">
+        <button type="button" class="btn-secondary bm-export-btn" data-bm-export="json">导出 JSON</button>
+        <button type="button" class="btn-secondary bm-export-btn" data-bm-export="markdown">导出 Markdown</button>
+      </div>
+    </div>
 
     <p class="hint" data-bookmarks-summary>
-      共 {{len .Groups}} 个视频、{{.TotalMarks}} 条书签，按最近打点排序；点击时间跳转到播放页对应位置。
+      共 {{len .Groups}} 个视频、{{.TotalMarks}} 条书签；点击时间跳转到播放页对应位置，可直接在本页编辑备注或删除。
     </p>
     {{if gt .OrphanMarks 0}}
     <p class="hint bm-orphan-hint" data-bookmarks-orphan>已跳过 {{.OrphanMarks}} 条所属视频已移除的悬空书签。</p>
     {{end}}
 
-    {{range .Groups}}
-    {{$g := .}}
-    <section class="bm-group shelf" data-bookmark-group data-video-id="{{$g.Video.ID}}">
-      <h2 class="shelf-title bm-group-title">
-        <a href="/watch/{{$g.Video.ID}}">
-          {{if and $g.Metadata $g.Metadata.Title}}{{$g.Metadata.Title}}{{else}}{{$g.Video.Name}}{{end}}
-        </a>
-        <span class="bm-group-count">{{len $g.Items}} 条</span>
-      </h2>
-      <ul class="bm-list bm-global-list">
-        {{range $g.Items}}
-        <li class="bm-item" data-bookmark-item data-bookmark-id="{{.Bookmark.ID}}">
-          <a class="bm-time" href="{{.SeekURL}}" data-bookmark-seek title="跳转到 {{.TimeText}}">{{.TimeText}}</a>
-          {{if .Bookmark.Note}}
-          <span class="bm-note" title="{{.Bookmark.Note}}">{{.Bookmark.Note}}</span>
-          {{else}}
-          <span class="bm-note bm-note-empty">无备注</span>
+    <!-- 数据岛：前端搜索/平铺/导出的唯一数据源 -->
+    <script type="application/json" data-bookmarks-json>{{.RecordsJSON}}</script>
+
+    <!-- 分组视图：服务端首屏渲染，同时作为无 JS 兜底；JS 加载后据此做搜索过滤与管理 -->
+    <div data-bm-group-view>
+      {{range .Groups}}
+      {{$g := .}}
+      <section class="bm-group shelf" data-bookmark-group data-video-id="{{$g.Video.ID}}">
+        <h2 class="shelf-title bm-group-title">
+          <a href="/watch/{{$g.Video.ID}}" class="bm-group-link">{{$g.VideoName}}</a>
+          <span class="bm-group-count">{{len $g.Items}} 条</span>
+        </h2>
+        <ul class="bm-list bm-global-list">
+          {{range $g.Items}}
+          <li class="bm-item" data-bookmark-item data-bookmark-id="{{.Bookmark.ID}}"
+              data-video-id="{{$g.Video.ID}}" data-note="{{.Bookmark.Note}}"
+              data-video-name="{{$g.VideoName}}">
+            <a class="bm-time" href="{{.SeekURL}}" data-bookmark-seek title="跳转到 {{.TimeText}}">{{.TimeText}}</a>
+            {{if .Bookmark.Note}}
+            <span class="bm-note" data-note-text title="{{.Bookmark.Note}}">{{.Bookmark.Note}}</span>
+            {{else}}
+            <span class="bm-note bm-note-empty" data-note-text>无备注</span>
+            {{end}}
+            <button type="button" class="bm-action" data-bm-edit title="编辑备注">编辑</button>
+            <button type="button" class="bm-action bm-action-danger" data-bm-delete title="删除书签">删除</button>
+          </li>
           {{end}}
-        </li>
-        {{end}}
-      </ul>
-    </section>
-    {{end}}
+        </ul>
+      </section>
+      {{end}}
+    </div>
+
+    <!-- 平铺视图：纯前端渲染，无 JS 时保持隐藏 -->
+    <div data-bm-flat-view hidden></div>
+    <p class="empty" data-bm-no-result hidden>没有匹配的书签。</p>
 
     {{else}}
     <div class="empty" data-bookmarks-empty>
@@ -88,5 +120,10 @@
     </div>
     {{end}}
   </main>
+
+  {{if and .StoreOn .RecordsJSON}}
+  <div class="skip-toast" data-bm-toast role="status" aria-live="polite" hidden></div>
+  <script src="/static/js/bookmarks.js" defer></script>
+  {{end}}
 </body>
 </html>

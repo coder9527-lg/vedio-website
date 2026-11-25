@@ -1379,6 +1379,47 @@ a.smart-rule-card { color: inherit; text-decoration: none; justify-content: spac
 .bm-global-list .bm-time { text-decoration: none; white-space: nowrap; }
 .bm-orphan-hint { color: var(--danger-soft); }
 
+/* 全局书签页工具栏：搜索 / 视图切换 / 排序 / 导出 */
+.bm-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 12px 0 8px;
+}
+.bm-search-input {
+  flex: 1 1 200px; min-width: 160px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text);
+  padding: 8px 12px; font-size: 14px;
+}
+.bm-search-input:focus { outline: none; border-color: var(--accent); }
+.bm-view-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.bm-view-btn {
+  background: transparent; border: 0; color: var(--muted);
+  padding: 8px 14px; font-size: 13px; cursor: pointer;
+}
+.bm-view-btn.is-active { background: var(--accent); color: #08131f; font-weight: 600; }
+.bm-sort-label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.bm-sort-select {
+  background: var(--surface-raised); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 10px; font-size: 13px;
+}
+.bm-export-wrap { display: inline-flex; gap: 8px; }
+.bm-export-btn { padding: 7px 12px; font-size: 13px; }
+.bm-flat-list { display: flex; flex-direction: column; gap: 8px; }
+.bm-flat-item { flex-wrap: nowrap; }
+.bm-flat-video {
+  min-width: 0; max-width: 240px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-size: 13px;
+}
+@media (max-width: 640px) {
+  .bm-toolbar { gap: 8px; }
+  .bm-export-wrap { width: 100%; }
+  .bm-export-wrap .bm-export-btn { flex: 1; }
+  .bm-flat-video { max-width: 120px; }
+}
+
 /* 字幕管理弹窗：菜单固定入口与上传/列表样式 */
 .sub-mgr-entry { border-top: 1px solid var(--border); border-radius: 0; margin-top: 2px; padding-top: 10px; }
 .sub-mgr-empty { color: var(--muted); font-size: 13px; padding: 8px 2px; }

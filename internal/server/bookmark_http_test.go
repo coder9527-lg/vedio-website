@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -307,7 +308,65 @@ func TestBookmarksGlobalPageRenders(t *testing.T) {
 	}
 }
 
-// TestBookmarksGlobalPageEmpty 验证有持久化但无书签时渲染空态，且不出现分组。
+// TestBookmarksGlobalPageToolbarAndDataIsland 验证前端管理/搜索/视图/导出所需的
+// 工具栏、数据岛与行内管理按钮均由服务端输出，且数据岛为可解析的完整 JSON。
+func TestBookmarksGlobalPageToolbarAndDataIsland(t *testing.T) {
+	_, ts, id := newPersistTestServer(t)
+	path := "/api/v1/videos/" + id + "/bookmarks"
+	doJSON(t, ts, http.MethodPost, path, map[string]any{"position": 42, "note": "高光"})
+
+	code, html := getHTML(t, ts, "/bookmarks")
+	if code != http.StatusOK {
+		t.Fatalf("全局书签页期望 200，实际 %d", code)
+	}
+	for _, want := range []string{
+		`data-bookmarks-toolbar`,
+		`data-bm-search`,
+		`data-bm-view="group"`,
+		`data-bm-view="flat"`,
+		`data-bm-sort`,
+		`data-bm-export="json"`,
+		`data-bm-export="markdown"`,
+		`data-bookmarks-json`,
+		`data-bm-edit`,
+		`data-bm-delete`,
+		`/static/js/bookmarks.js`,
+		`data-bm-toast`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("页面缺少片段 %q", want)
+		}
+	}
+
+	// 数据岛内容必须是合法 JSON，且字段满足前端搜索/平铺/导出依赖
+	start := strings.Index(html, `data-bookmarks-json>`)
+	if start < 0 {
+		t.Fatal("缺少数据岛脚本")
+	}
+	jsonStart := start + len(`data-bookmarks-json>`)
+	end := strings.Index(html[jsonStart:], "</script>")
+	if end < 0 {
+		t.Fatal("数据岛脚本未闭合")
+	}
+	var recs []map[string]any
+	if err := json.Unmarshal([]byte(html[jsonStart:jsonStart+end]), &recs); err != nil {
+		t.Fatalf("数据岛不是合法 JSON: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("数据岛应含 1 条记录，实际 %d", len(recs))
+	}
+	rec := recs[0]
+	for _, key := range []string{"id", "videoId", "videoName", "position", "timeText", "note", "seekUrl", "createdAt"} {
+		if _, ok := rec[key]; !ok {
+			t.Errorf("数据岛记录缺少字段 %q", key)
+		}
+	}
+	if rec["note"] != "高光" || rec["seekUrl"] != "/watch/"+id+"?t=42" {
+		t.Errorf("数据岛记录内容异常: %+v", rec)
+	}
+}
+
+// TestBookmarksGlobalPageEmpty 验证有持久化但无书签时渲染空态，且不出现分组、工具栏与 JS。
 func TestBookmarksGlobalPageEmpty(t *testing.T) {
 	_, ts, _ := newPersistTestServer(t)
 	code, html := getHTML(t, ts, "/bookmarks")
@@ -320,9 +379,14 @@ func TestBookmarksGlobalPageEmpty(t *testing.T) {
 	if strings.Contains(html, `data-bookmark-group`) {
 		t.Error("无书签时不应渲染任何分组")
 	}
+	for _, want := range []string{`data-bookmarks-toolbar`, `/static/js/bookmarks.js`, `data-bookmarks-json`} {
+		if strings.Contains(html, want) {
+			t.Errorf("无书签时不应输出 %q", want)
+		}
+	}
 }
 
-// TestBookmarksGlobalPageNoStore 验证无持久化时页面可访问但展示未启用提示。
+// TestBookmarksGlobalPageNoStore 验证无持久化时页面可访问但展示未启用提示，且不加载管理 JS。
 func TestBookmarksGlobalPageNoStore(t *testing.T) {
 	_, ts := newTestServer(t, "")
 	code, html := getHTML(t, ts, "/bookmarks")
@@ -334,6 +398,9 @@ func TestBookmarksGlobalPageNoStore(t *testing.T) {
 	}
 	if strings.Contains(html, `data-bookmark-group`) {
 		t.Error("无持久化时不应渲染任何分组")
+	}
+	if strings.Contains(html, `/static/js/bookmarks.js`) || strings.Contains(html, `data-bookmarks-toolbar`) {
+		t.Error("无持久化时不应加载书签管理 JS 与工具栏")
 	}
 }
 
