@@ -62,6 +62,55 @@ var tmplFuncs = template.FuncMap{
 		}
 		return "/"
 	},
+	// searchURL 生成保持 q/sort/type/genre/tag 五元组正交的搜索页链接；
+	// overrides 以 key/value 成对传入覆盖项，空值表示从 URL 中移除该参数。
+	"searchURL": func(current map[string]string, overrides ...string) string {
+		params := url.Values{}
+		for k, v := range current {
+			if v != "" {
+				params.Set(k, v)
+			}
+		}
+		for i := 0; i+1 < len(overrides); i += 2 {
+			k, v := overrides[i], overrides[i+1]
+			if v == "" {
+				params.Del(k)
+			} else {
+				params.Set(k, v)
+			}
+		}
+		if encoded := params.Encode(); encoded != "" {
+			return "/search?" + encoded
+		}
+		return "/search"
+	},
+	// highlight 把文本中不区分大小写出现的关键字包进 <mark>，供搜索结果高亮；
+	// 先转义再包裹，避免关键字或原文中的 HTML 被当标签注入。
+	"highlight": func(text, keyword string) template.HTML {
+		escaped := template.HTMLEscapeString(text)
+		kw := strings.TrimSpace(keyword)
+		if kw == "" {
+			return template.HTML(escaped)
+		}
+		kwEscaped := template.HTMLEscapeString(kw)
+		lower := strings.ToLower(escaped)
+		kwLower := strings.ToLower(kwEscaped)
+		var b strings.Builder
+		for {
+			idx := strings.Index(lower, kwLower)
+			if idx < 0 {
+				b.WriteString(escaped)
+				break
+			}
+			b.WriteString(escaped[:idx])
+			b.WriteString(`<mark>`)
+			b.WriteString(escaped[idx : idx+len(kwLower)])
+			b.WriteString(`</mark>`)
+			escaped = escaped[idx+len(kwLower):]
+			lower = lower[idx+len(kwLower):]
+		}
+		return template.HTML(b.String())
+	},
 	// scrapeSource 把元信息来源标记转为中文展示文案。
 	"scrapeSource": func(source string) string {
 		switch source {

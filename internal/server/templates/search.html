@@ -52,6 +52,52 @@
       </div>
     </form>
 
+    {{if .Query}}
+    <!-- 筛选条：仅有关键字时出现；排序表单带上当前筛选快照，切换排序不丢条件 -->
+    <form class="toolbar" method="get" action="/search">
+      <input type="hidden" name="q" value="{{.Query}}">
+      <input type="hidden" name="type" value="{{.Type}}">
+      <input type="hidden" name="genre" value="{{.Genre}}">
+      <input type="hidden" name="tag" value="{{.Tag}}">
+      <label class="sort-box">排序
+        <select name="sort" onchange="this.form.submit()">
+          <option value="" {{if eq .Sort ""}}selected{{end}}>默认（路径）</option>
+          <option value="name" {{if eq .Sort "name"}}selected{{end}}>名称</option>
+          <option value="newest" {{if eq .Sort "newest"}}selected{{end}}>最新修改</option>
+          <option value="oldest" {{if eq .Sort "oldest"}}selected{{end}}>最旧修改</option>
+          <option value="size" {{if eq .Sort "size"}}selected{{end}}>体积最大</option>
+        </select>
+      </label>
+    </form>
+
+    <nav class="view-tabs" aria-label="类型切换" data-search-type-tabs>
+      <a href="{{searchURL .Params "type" "all"}}" class="tab {{if eq .Type "all"}}active{{end}}">全部</a>
+      <a href="{{searchURL .Params "type" "movie"}}" class="tab {{if eq .Type "movie"}}active{{end}}">电影</a>
+      <a href="{{searchURL .Params "type" "show"}}" class="tab {{if eq .Type "show"}}active{{end}}">剧集</a>
+    </nav>
+
+    {{if .Genres}}
+    <nav class="view-tabs genre-tabs" aria-label="影片类型筛选">
+      <a href="{{searchURL .Params "genre" ""}}" class="tab tab-chip {{if eq .Genre ""}}active{{end}}">全部类型</a>
+      {{range .Genres}}
+      <a href="{{searchURL $.Params "genre" .}}" class="tab tab-chip {{if eq $.Genre .}}active{{end}}">{{.}}</a>
+      {{end}}
+    </nav>
+    {{end}}
+
+    {{if .StoreOn}}
+    <nav class="view-tabs genre-tabs tag-tabs-row" aria-label="用户标签筛选">
+      <div class="tag-chips">
+        <a href="{{searchURL .Params "tag" ""}}" class="tab tab-chip tag-chip {{if eq .Tag ""}}active{{end}}">全部标签</a>
+        {{range .Tags}}
+        <a href="{{searchURL $.Params "tag" .Name}}"
+           class="tab tab-chip tag-chip {{if eq $.Tag .Name}}active{{end}}">{{.Name}}<span class="tag-chip-count">{{.VideoCount}}</span></a>
+        {{end}}
+      </div>
+    </nav>
+    {{end}}
+    {{end}}
+
     {{if not .Query}}
     <div class="empty">
       <p>输入关键字开始搜索。</p>
@@ -82,12 +128,12 @@
           </div>
           <div class="meta">
             {{if and $md $md.Title}}
-            <h2 class="video-name" title="{{$v.RelPath}}">{{$md.Title}}{{if $md.Year}} <span class="meta-year">({{$md.Year}})</span>{{end}}</h2>
-            {{if ne $md.Title $v.Name}}<p class="video-original-name">{{$v.Name}}</p>{{end}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{highlight $md.Title $.Query}}{{if $md.Year}} <span class="meta-year">({{$md.Year}})</span>{{end}}</h2>
+            {{if ne $md.Title $v.Name}}<p class="video-original-name">{{highlight $v.Name $.Query}}</p>{{end}}
             {{else}}
-            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            <h2 class="video-name" title="{{$v.RelPath}}">{{highlight $v.Name $.Query}}</h2>
             {{end}}
-            <p class="video-path">{{$v.RelPath}}</p>
+            <p class="video-path">{{highlight $v.RelPath $.Query}}</p>
             {{if and $md $md.Rating}}
             <p class="meta-rating">⭐ {{printf "%.1f" $md.Rating}}{{if $md.Runtime}} · {{$md.Runtime}} 分钟{{end}}{{if $md.Genres}} · {{index $md.Genres 0}}{{end}}</p>
             {{end}}

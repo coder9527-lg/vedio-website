@@ -178,6 +178,13 @@ button:disabled { opacity: .6; cursor: wait; }
   font-size: 11px;
   opacity: .7;
 }
+/* 搜索结果关键字高亮：沿用强调色系，深浅主题均可读 */
+mark {
+  background: rgba(56, 189, 248, .28);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
 /* 卡片上的用户小标签 */
 .card-tag-row {
   display: flex;
