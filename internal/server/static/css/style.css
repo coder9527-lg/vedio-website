@@ -1101,6 +1101,10 @@ a.pl-io-btn {
   .shelf-card { flex-basis: 200px; }
 }
 
+/* 播放页同目录相关视频：窄容器内卡片顶对齐，避免高度被拉伸 */
+.related-row { align-items: flex-start; }
+.related-shelf { margin-bottom: 20px; }
+
 /* 历史页：单条删除角标。包裹层接管 shelf-card 在横滑行中的宽度与定位 */
 .history-card-wrap {
   position: relative;

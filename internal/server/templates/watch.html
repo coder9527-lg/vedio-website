@@ -281,6 +281,34 @@
     </section>
     {{end}}
 
+    {{if .Related}}
+    <section class="shelf related-shelf" data-related aria-label="同目录相关视频">
+      <h2 class="shelf-title">同目录相关视频</h2>
+      <div class="shelf-row related-row">
+        {{range .Related}}
+        {{$v := .Video}}
+        <a class="shelf-card related-card" href="/watch/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and .Metadata .Metadata.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+          </div>
+          <div class="meta">
+            {{if and .Metadata .Metadata.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+          </div>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
     {{if .ScrapeOn}}
     <div id="scrape-modal" class="scrape-modal" hidden>
       <div class="scrape-dialog" role="dialog" aria-modal="true" aria-labelledby="scrape-dialog-title">

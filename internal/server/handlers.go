@@ -220,6 +220,34 @@ func hasProgressValue(position, duration float64) bool {
 	return true
 }
 
+// relatedSize 限制播放页同目录相关视频卡片数量。
+const relatedSize = 12
+
+// videoDir 返回视频所在目录（RelPath 统一斜杠分隔，无斜杠的根散文件目录为空串）。
+func videoDir(relPath string) string {
+	if i := strings.LastIndexByte(relPath, '/'); i >= 0 {
+		return relPath[:i]
+	}
+	return ""
+}
+
+// buildRelatedVideos 取与当前视频同处一个直接目录的其他视频：
+// Library.List 已按 RelPath 排序，排除自身并取前 relatedSize 个；纯媒体库数据，与持久化无关。
+func (s *Server) buildRelatedVideos(v *media.Video) []shelfCard {
+	dir := videoDir(v.RelPath)
+	cards := make([]shelfCard, 0, relatedSize)
+	for _, other := range s.library.List() {
+		if other.ID == v.ID || videoDir(other.RelPath) != dir {
+			continue
+		}
+		cards = append(cards, shelfCard{Video: other, Metadata: s.library.Metadata(other.ID)})
+		if len(cards) >= relatedSize {
+			break
+		}
+	}
+	return cards
+}
+
 func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.library.Get(r.PathValue("id"))
 	if !ok {
@@ -328,6 +356,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		BookmarksJSON  template.JS
 		Tags           []store.Tag // 当前视频的标签
 		AllTags        []store.Tag // 全库标签，供输入框自动补全
+		Related        []shelfCard // 同目录相关视频（排除自身，无同目录伙伴时为空，模板不渲染区块）
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
@@ -348,6 +377,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		BookmarksJSON:  bookmarksJSON,
 		Tags:           videoTags,
 		AllTags:        allTags,
+		Related:        s.buildRelatedVideos(v),
 	})
 }
 
