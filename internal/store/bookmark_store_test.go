@@ -179,6 +179,45 @@ func TestBookmarkDelete(t *testing.T) {
 	}
 }
 
+// TestBookmarkListAll 验证全库查询：跨视频汇总、按创建时间倒序、空库返回 nil。
+func TestBookmarkListAll(t *testing.T) {
+	st := openTestStore(t)
+
+	// 空库返回 nil、无报错
+	got, err := st.ListAllBookmarks()
+	if err != nil || got != nil {
+		t.Fatalf("空库 ListAll 应返回 nil, got=%v err=%v", got, err)
+	}
+
+	first, err := st.CreateBookmark("vid-1", 10, "最早")
+	if err != nil {
+		t.Fatalf("创建第一条失败: %v", err)
+	}
+	second, err := st.CreateBookmark("vid-2", 20, "第二条")
+	if err != nil {
+		t.Fatalf("创建第二条失败: %v", err)
+	}
+	third, err := st.CreateBookmark("vid-1", 30, "最新")
+	if err != nil {
+		t.Fatalf("创建第三条失败: %v", err)
+	}
+
+	all, err := st.ListAllBookmarks()
+	if err != nil {
+		t.Fatalf("ListAll 失败: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("应汇总跨视频全部 3 条，实际 %d", len(all))
+	}
+	// created_at 倒序：最新创建的排在最前
+	wantIDs := []int64{third.ID, second.ID, first.ID}
+	for i, want := range wantIDs {
+		if all[i].ID != want {
+			t.Fatalf("第 %d 条期望书签 id=%d，实际 id=%d（未按创建时间倒序）", i, want, all[i].ID)
+		}
+	}
+}
+
 // TestBookmarkPrune 验证重扫清理：孤儿书签被删、在库视频保留、空合集全清。
 func TestBookmarkPrune(t *testing.T) {
 	st := openTestStore(t)

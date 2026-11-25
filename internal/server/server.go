@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /smart", s.handleSmartPlaylists)
 	mux.HandleFunc("GET /smart/{rule}", s.handleSmartPlaylistDetail)
 	mux.HandleFunc("GET /history", s.handleHistory)
+	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
 	mux.HandleFunc("GET /review", s.handleReview)
 	mux.HandleFunc("POST /history/clear", s.handleClearHistory)
 	mux.HandleFunc("POST /history/event/delete", s.handleDeleteEvent)

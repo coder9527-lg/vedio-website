@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container" data-bookmarks-page>
+    <h2 class="stats-heading">🔖 全部书签</h2>
+
+    {{if not .StoreOn}}
+    <div class="empty" data-bookmarks-empty-store>
+      <p>未启用持久化（DB_PATH 未配置），暂无书签。</p>
+      <p class="hint">配置数据库路径后，播放页打点的书签会自动汇总在此，点击即可跳转到对应时间点。</p>
+    </div>
+    {{else if .Groups}}
+
+    <p class="hint" data-bookmarks-summary>
+      共 {{len .Groups}} 个视频、{{.TotalMarks}} 条书签，按最近打点排序；点击时间跳转到播放页对应位置。
+    </p>
+    {{if gt .OrphanMarks 0}}
+    <p class="hint bm-orphan-hint" data-bookmarks-orphan>已跳过 {{.OrphanMarks}} 条所属视频已移除的悬空书签。</p>
+    {{end}}
+
+    {{range .Groups}}
+    {{$g := .}}
+    <section class="bm-group shelf" data-bookmark-group data-video-id="{{$g.Video.ID}}">
+      <h2 class="shelf-title bm-group-title">
+        <a href="/watch/{{$g.Video.ID}}">
+          {{if and $g.Metadata $g.Metadata.Title}}{{$g.Metadata.Title}}{{else}}{{$g.Video.Name}}{{end}}
+        </a>
+        <span class="bm-group-count">{{len $g.Items}} 条</span>
+      </h2>
+      <ul class="bm-list bm-global-list">
+        {{range $g.Items}}
+        <li class="bm-item" data-bookmark-item data-bookmark-id="{{.Bookmark.ID}}">
+          <a class="bm-time" href="{{.SeekURL}}" data-bookmark-seek title="跳转到 {{.TimeText}}">{{.TimeText}}</a>
+          {{if .Bookmark.Note}}
+          <span class="bm-note" title="{{.Bookmark.Note}}">{{.Bookmark.Note}}</span>
+          {{else}}
+          <span class="bm-note bm-note-empty">无备注</span>
+          {{end}}
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    {{else}}
+    <div class="empty" data-bookmarks-empty>
+      <p>还没有书签。</p>
+      <p class="hint">在<a href="/">视频库</a>打开任意视频，播放中点「＋书签」打点，之后会自动汇总在这里。</p>
+    </div>
+    {{end}}
+  </main>
+</body>
+</html>

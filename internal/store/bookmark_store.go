@@ -100,6 +100,29 @@ func (s *Store) ListBookmarks(videoID string) ([]Bookmark, error) {
 	return out, rows.Err()
 }
 
+// ListAllBookmarks 列出全库书签，按创建时间倒序、同时间按 id 倒序，
+// 供全局书签页一次性取回后在 handler 层按视频分组。无记录时返回 (nil, nil)。
+func (s *Store) ListAllBookmarks() ([]Bookmark, error) {
+	rows, err := s.db.Query(
+		`SELECT ` + bookmarkColumns + ` FROM bookmarks
+		 ORDER BY created_at DESC, id DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Bookmark
+	for rows.Next() {
+		bm, err := scanBookmark(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, bm)
+	}
+	return out, rows.Err()
+}
+
 // UpdateBookmarkNote 修改一条书签的备注。videoID 作为归属条件防止跨视频误改：
 // 命中返回 (true, nil)，书签不存在或不属于该视频返回 (false, nil)。
 func (s *Store) UpdateBookmarkNote(id int64, videoID string, note string) (bool, error) {

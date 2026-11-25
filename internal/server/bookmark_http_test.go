@@ -269,3 +269,141 @@ func TestBookmarkWatchPageEmptyState(t *testing.T) {
 		t.Error("无书签时应注入 null 或空数组的初始数据")
 	}
 }
+
+// TestBookmarksGlobalPageRenders 验证全局书签页按视频分组渲染，
+// 每条书签带 ?t= 时间点跳转链接，且组内按位置升序。
+func TestBookmarksGlobalPageRenders(t *testing.T) {
+	_, ts, id := newPersistTestServer(t)
+	path := "/api/v1/videos/" + id + "/bookmarks"
+
+	// 先打 120s 再打 30s，验证页内重排为位置升序
+	doJSON(t, ts, http.MethodPost, path, map[string]any{"position": 120, "note": "精彩片段"})
+	doJSON(t, ts, http.MethodPost, path, map[string]any{"position": 30})
+
+	code, html := getHTML(t, ts, "/bookmarks")
+	if code != http.StatusOK {
+		t.Fatalf("全局书签页期望 200，实际 %d", code)
+	}
+	for _, want := range []string{
+		`data-bookmarks-page`,
+		`data-bookmark-group`,
+		`data-bookmark-item`,
+		`data-bookmarks-summary`,
+		`/watch/` + id + `?t=30`,
+		`/watch/` + id + `?t=120`,
+		`精彩片段`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("全局书签页缺少片段 %q", want)
+		}
+	}
+	// 组内位置升序：30s 的链接应出现在 120s 之前
+	if i30, i120 := strings.Index(html, "?t=30"), strings.Index(html, "?t=120"); i30 < 0 || i120 < 0 || i30 > i120 {
+		t.Errorf("组内应按位置升序，30s 链接在前，实际位置 %d %d", i30, i120)
+	}
+	// 跳转链接挂在专属锚点上
+	if !strings.Contains(html, `data-bookmark-seek`) {
+		t.Error("时间点跳转应渲染 data-bookmark-seek 锚点")
+	}
+}
+
+// TestBookmarksGlobalPageEmpty 验证有持久化但无书签时渲染空态，且不出现分组。
+func TestBookmarksGlobalPageEmpty(t *testing.T) {
+	_, ts, _ := newPersistTestServer(t)
+	code, html := getHTML(t, ts, "/bookmarks")
+	if code != http.StatusOK {
+		t.Fatalf("全局书签页期望 200，实际 %d", code)
+	}
+	if !strings.Contains(html, `data-bookmarks-empty`) {
+		t.Error("无书签时应渲染 data-bookmarks-empty 空态")
+	}
+	if strings.Contains(html, `data-bookmark-group`) {
+		t.Error("无书签时不应渲染任何分组")
+	}
+}
+
+// TestBookmarksGlobalPageNoStore 验证无持久化时页面可访问但展示未启用提示。
+func TestBookmarksGlobalPageNoStore(t *testing.T) {
+	_, ts := newTestServer(t, "")
+	code, html := getHTML(t, ts, "/bookmarks")
+	if code != http.StatusOK {
+		t.Fatalf("无持久化全局书签页期望 200（与历史页同策略），实际 %d", code)
+	}
+	if !strings.Contains(html, `data-bookmarks-empty-store`) {
+		t.Error("无持久化时应渲染 data-bookmarks-empty-store 提示")
+	}
+	if strings.Contains(html, `data-bookmark-group`) {
+		t.Error("无持久化时不应渲染任何分组")
+	}
+}
+
+// TestBookmarksGlobalPageSkipsOrphans 验证悬空书签（视频已不在媒体库）被跳过并计数，
+// 真实视频的书签正常展示；同时验证多视频分组按最近打点倒序。
+func TestBookmarksGlobalPageSkipsOrphans(t *testing.T) {
+	srv, ts, id := newPersistTestServer(t)
+
+	// 第二个真实视频
+	secondPath := filepath.Join(srv.library.Root(), "second.mp4")
+	if err := os.WriteFile(secondPath, []byte("fake2"), 0o644); err != nil {
+		t.Fatalf("写入第二个测试视频失败: %v", err)
+	}
+	if _, err := srv.library.Scan(); err != nil {
+		t.Fatalf("重扫失败: %v", err)
+	}
+	var secondID string
+	for _, v := range srv.library.List() {
+		if v.ID != id {
+			secondID = v.ID
+		}
+	}
+	if secondID == "" {
+		t.Fatal("未找到第二个视频 ID")
+	}
+
+	// 直接经 store 写入：两个真实视频各一条，外加一条悬空书签
+	if _, err := srv.store.CreateBookmark(id, 10, "第一个视频"); err != nil {
+		t.Fatalf("写 id 书签失败: %v", err)
+	}
+	if _, err := srv.store.CreateBookmark(secondID, 20, "第二个视频"); err != nil {
+		t.Fatalf("写 secondID 书签失败: %v", err)
+	}
+	if _, err := srv.store.CreateBookmark("ghost-video", 30, "悬空书签"); err != nil {
+		t.Fatalf("写悬空书签失败: %v", err)
+	}
+
+	code, html := getHTML(t, ts, "/bookmarks")
+	if code != http.StatusOK {
+		t.Fatalf("全局书签页期望 200，实际 %d", code)
+	}
+	// 悬空视频的 ID 不出现在任何跳转链接/分组上（备注文案不与孤儿提示撞词）
+	if strings.Contains(html, "/watch/ghost-video") || strings.Contains(html, `data-video-id="ghost-video"`) {
+		t.Error("悬空书签不应出现在页面上")
+	}
+	if !strings.Contains(html, `data-bookmarks-orphan`) || !strings.Contains(html, "1 条") {
+		t.Error("应提示跳过了 1 条悬空书签")
+	}
+	if !strings.Contains(html, "/watch/"+id+"?t=10") || !strings.Contains(html, "/watch/"+secondID+"?t=20") {
+		t.Error("两个真实视频的书签跳转链接都应渲染")
+	}
+	// 两个分组：第二个视频的书签创建更晚，应排在前面
+	iSecond := strings.Index(html, `data-video-id="`+secondID+`"`)
+	iFirst := strings.Index(html, `data-video-id="`+id+`"`)
+	if iSecond < 0 || iFirst < 0 || iSecond > iFirst {
+		t.Errorf("分组应按最近打点倒序，secondID 在前，实际 %d %d", iSecond, iFirst)
+	}
+}
+
+// TestBookmarksGlobalPageRoundsPosition 验证 ?t= 链接对小数秒取整，与播放页复制链接口径一致。
+func TestBookmarksGlobalPageRoundsPosition(t *testing.T) {
+	_, ts, id := newPersistTestServer(t)
+	doJSON(t, ts, http.MethodPost,
+		"/api/v1/videos/"+id+"/bookmarks", map[string]any{"position": 89.6})
+
+	_, html := getHTML(t, ts, "/bookmarks")
+	if !strings.Contains(html, "/watch/"+id+"?t=90") {
+		t.Errorf("小数秒应四舍五入为整数 ?t=90，页面片段: %s", html)
+	}
+	if strings.Contains(html, "?t=89.6") {
+		t.Error("跳转链接不应携带小数秒")
+	}
+}
