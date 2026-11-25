@@ -56,6 +56,14 @@
       <button type="submit" class="btn-secondary">清空全部历史</button>
     </form>
 
+    <!-- 纯前端筛选：仅过滤已渲染卡片，不发请求；无数据/无持久化分支不渲染本区块 -->
+    <div class="history-filter-bar">
+      <input type="search" class="history-filter-input" id="history-filter-input"
+             placeholder="筛选观看历史…" aria-label="筛选观看历史" autocomplete="off">
+      <span class="history-filter-count" id="history-filter-count" aria-live="polite"></span>
+    </div>
+    <p class="history-filter-empty" id="history-filter-empty" hidden>没有匹配的观看记录。</p>
+
     {{range .Groups}}
     <section class="shelf" aria-label="{{.Label}}">
       <h2 class="shelf-title">{{.Label}}</h2>
@@ -105,5 +113,37 @@
     </div>
     {{end}}
   </main>
+
+  <!-- 纯前端筛选：按卡片文本（片名/文件名等）关键词过滤，分组无可见卡片时整组隐藏 -->
+  <script>
+    (function () {
+      var input = document.getElementById('history-filter-input');
+      var count = document.getElementById('history-filter-count');
+      var emptyHint = document.getElementById('history-filter-empty');
+      if (!input || !count || !emptyHint) return;
+      var cards = Array.prototype.slice.call(document.querySelectorAll('.history-card-wrap'));
+      var sections = Array.prototype.slice.call(document.querySelectorAll('.shelf'));
+      var total = cards.length;
+
+      function applyFilter() {
+        var keyword = input.value.trim().toLowerCase();
+        var visible = 0;
+        cards.forEach(function (card) {
+          var matched = !keyword || card.textContent.toLowerCase().indexOf(keyword) !== -1;
+          card.hidden = !matched;
+          if (matched) visible++;
+        });
+        // 分组内卡片全部被过滤时连日期标题一起隐藏，避免留下空分组
+        sections.forEach(function (section) {
+          var hasVisible = section.querySelectorAll('.history-card-wrap:not([hidden])').length > 0;
+          section.hidden = !hasVisible;
+        });
+        count.textContent = keyword ? (visible + ' / ' + total) : '';
+        emptyHint.hidden = !(keyword && visible === 0);
+      }
+
+      input.addEventListener('input', applyFilter);
+    })();
+  </script>
 </body>
 </html>

@@ -1134,6 +1134,36 @@ a.pl-io-btn {
   .history-card-wrap { flex-basis: 200px; }
 }
 
+/* 历史页纯前端筛选条：仅过滤已渲染卡片，复用通用输入框配色 */
+.history-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+.history-filter-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.history-filter-input:focus { outline: none; border-color: var(--accent); }
+.history-filter-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.history-filter-empty {
+  margin: 18px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 /* ---- 观影统计页 ---- */
 .stats-heading { margin: 16px 0 4px; }
 .stats-grid {

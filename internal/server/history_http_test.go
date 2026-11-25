@@ -167,8 +167,8 @@ func TestHistoryDeleteSingleEvent(t *testing.T) {
 
 	// ev1 已删、ev2 保留：页面只剩一张卡片、一个删除表单
 	_, body := getHTML(t, ts, "/history")
-	if strings.Count(body, "history-card-wrap") != 1 {
-		t.Errorf("删除后应剩 1 张卡片，实际 %d", strings.Count(body, "history-card-wrap"))
+	if strings.Count(body, `class="history-card-wrap"`) != 1 {
+		t.Errorf("删除后应剩 1 张卡片，实际 %d", strings.Count(body, `class="history-card-wrap"`))
 	}
 	if !strings.Contains(body, strconv.FormatInt(ev2, 10)) {
 		t.Error("保留的事件 ev2 应仍在页面上")
@@ -203,8 +203,8 @@ func TestHistoryDeleteEventBadRequest(t *testing.T) {
 
 	// 非法请求不应误删数据：卡片仍在
 	_, body := getHTML(t, ts, "/history")
-	if strings.Count(body, "history-card-wrap") != 1 {
-		t.Errorf("非法删除后数据应保持 1 条，实际 %d", strings.Count(body, "history-card-wrap"))
+	if strings.Count(body, `class="history-card-wrap"`) != 1 {
+		t.Errorf("非法删除后数据应保持 1 条，实际 %d", strings.Count(body, `class="history-card-wrap"`))
 	}
 }
 
@@ -217,5 +217,44 @@ func TestHistoryDeleteDisabledWhenStoreOff(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("无持久化时应 503，实际 %d", resp.StatusCode)
+	}
+}
+
+// TestHistoryFilterInjection 锁死有数据时筛选条与前端过滤接线的渲染契约。
+// 仅校验专属 id/class，实时过滤交互属浏览器范畴，不在此覆盖。
+func TestHistoryFilterInjection(t *testing.T) {
+	_, ts, id := newPersistTestServer(t)
+	doJSON(t, ts, http.MethodPut, "/api/v1/videos/"+id+"/progress",
+		map[string]any{"position": 5.0, "duration": 100.0, "watchDelta": 5.0, "sessionStart": true})
+
+	code, body := getHTML(t, ts, "/history")
+	if code != http.StatusOK {
+		t.Fatalf("/history 应 200，实际 %d", code)
+	}
+	for _, want := range []string{
+		`class="history-filter-bar"`,
+		`id="history-filter-input"`,
+		`id="history-filter-count"`,
+		`id="history-filter-empty"`,
+		`applyFilter`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("历史页缺少筛选注入内容 %q", want)
+		}
+	}
+}
+
+// TestHistoryFilterHiddenOnEmpty 无数据与无持久化两个空态分支都不应渲染筛选条。
+func TestHistoryFilterHiddenOnEmpty(t *testing.T) {
+	// 已开启持久化但无任何事件
+	_, tsWithStore, _ := newPersistTestServer(t)
+	if _, body := getHTML(t, tsWithStore, "/history"); strings.Contains(body, "history-filter-bar") {
+		t.Error("无观看记录时不应渲染筛选条")
+	}
+
+	// 未启用持久化
+	_, tsNoStore := newTestServer(t, "")
+	if _, body := getHTML(t, tsNoStore, "/history"); strings.Contains(body, "history-filter-bar") {
+		t.Error("无持久化时不应渲染筛选条")
 	}
 }
