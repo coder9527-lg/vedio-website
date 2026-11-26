@@ -1413,11 +1413,37 @@ a.smart-rule-card { color: inherit; text-decoration: none; justify-content: spac
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--muted); font-size: 13px;
 }
+
+/* 批量管理条：勾选书签后出现（display:flex 会覆盖 [hidden] 默认值，需显式兜底） */
+.bm-batch-bar[hidden], .bm-list[hidden] { display: none; }
+.bm-batch-bar {
+  display: flex; align-items: center; gap: 14px;
+  margin: 10px 0; padding: 8px 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+}
+.bm-select-all { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.bm-batch-count { font-size: 13px; color: var(--muted); }
+.bm-batch-delete { padding: 6px 14px; font-size: 13px; }
+.bm-batch-delete:disabled { opacity: .5; cursor: not-allowed; }
+.bm-row-check { flex: 0 0 auto; cursor: pointer; accent-color: var(--accent); }
+
+/* 分组折叠按钮：折叠时箭头旋转 90° */
+.bm-collapse-btn {
+  flex: 0 0 auto;
+  background: transparent; border: 0; padding: 2px 6px;
+  color: var(--muted); font-size: 14px; cursor: pointer;
+  transition: transform .18s ease;
+}
+.bm-group.is-collapsed .bm-collapse-btn { transform: rotate(-90deg); }
+
 @media (max-width: 640px) {
   .bm-toolbar { gap: 8px; }
   .bm-export-wrap { width: 100%; }
   .bm-export-wrap .bm-export-btn { flex: 1; }
   .bm-flat-video { max-width: 120px; }
+  .bm-batch-bar { gap: 10px; padding: 8px 10px; }
 }
 
 /* 字幕管理弹窗：菜单固定入口与上传/列表样式 */

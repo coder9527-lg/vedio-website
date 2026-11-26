@@ -50,12 +50,12 @@
     </div>
     {{else if .RecordsJSON}}
 
-    <!-- 工具栏：搜索 / 视图切换 / 排序 / 导出，全部前端完成、不额外请求后端 -->
+    <!-- 工具栏：搜索 / 视图切换 / 排序 / 导出 / 批量管理，全部前端完成、不额外请求后端 -->
     <div class="bm-toolbar" data-bookmarks-toolbar>
       <input type="search" class="bm-search-input" data-bm-search
              placeholder="搜索备注或视频名…" aria-label="搜索书签">
       <div class="bm-view-switch" role="group" aria-label="视图切换">
-        <button type="button" class="bm-view-btn is-active" data-bm-view="group" aria-pressed="true">分组</button>
+        <button type="button" class="bm-view-btn" data-bm-view="group" aria-pressed="false">分组</button>
         <button type="button" class="bm-view-btn" data-bm-view="flat" aria-pressed="false">平铺</button>
       </div>
       <label class="bm-sort-label">排序
@@ -68,6 +68,15 @@
         <button type="button" class="btn-secondary bm-export-btn" data-bm-export="json">导出 JSON</button>
         <button type="button" class="btn-secondary bm-export-btn" data-bm-export="markdown">导出 Markdown</button>
       </div>
+    </div>
+
+    <!-- 批量管理条：勾选任意书签后出现，支持全选与批量删除 -->
+    <div class="bm-batch-bar" data-bm-batch-bar hidden>
+      <label class="bm-select-all">
+        <input type="checkbox" data-bm-select-all aria-label="全选当前结果"> 全选
+      </label>
+      <span class="bm-batch-count" data-bm-batch-count>已选 0 条</span>
+      <button type="button" class="btn-secondary bm-batch-delete" data-bm-batch-delete disabled>批量删除</button>
     </div>
 
     <p class="hint" data-bookmarks-summary>
@@ -86,20 +95,24 @@
       {{$g := .}}
       <section class="bm-group shelf" data-bookmark-group data-video-id="{{$g.Video.ID}}">
         <h2 class="shelf-title bm-group-title">
+          <button type="button" class="bm-collapse-btn" data-bm-collapse
+                  aria-expanded="true" title="折叠/展开该视频">▾</button>
           <a href="/watch/{{$g.Video.ID}}" class="bm-group-link">{{$g.VideoName}}</a>
           <span class="bm-group-count">{{len $g.Items}} 条</span>
         </h2>
-        <ul class="bm-list bm-global-list">
+        <ul class="bm-list bm-global-list" data-bm-group-list>
           {{range $g.Items}}
           <li class="bm-item" data-bookmark-item data-bookmark-id="{{.Bookmark.ID}}"
               data-video-id="{{$g.Video.ID}}" data-note="{{.Bookmark.Note}}"
               data-video-name="{{$g.VideoName}}">
+            <input type="checkbox" class="bm-row-check" data-bm-check data-id="{{.Bookmark.ID}}" aria-label="选择该书签">
             <a class="bm-time" href="{{.SeekURL}}" data-bookmark-seek title="跳转到 {{.TimeText}}">{{.TimeText}}</a>
             {{if .Bookmark.Note}}
             <span class="bm-note" data-note-text title="{{.Bookmark.Note}}">{{.Bookmark.Note}}</span>
             {{else}}
             <span class="bm-note bm-note-empty" data-note-text>无备注</span>
             {{end}}
+            <button type="button" class="bm-action" data-bm-copy title="复制跳转链接">复制</button>
             <button type="button" class="bm-action" data-bm-edit title="编辑备注">编辑</button>
             <button type="button" class="bm-action bm-action-danger" data-bm-delete title="删除书签">删除</button>
           </li>

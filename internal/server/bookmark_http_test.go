@@ -332,6 +332,13 @@ func TestBookmarksGlobalPageToolbarAndDataIsland(t *testing.T) {
 		`data-bm-delete`,
 		`/static/js/bookmarks.js`,
 		`data-bm-toast`,
+		// 批量删除、复制链接、分组折叠所需元素由服务端输出（JS 接管事件）
+		`data-bm-batch-bar`,
+		`data-bm-batch-delete`,
+		`data-bm-select-all`,
+		`data-bm-check`,
+		`data-bm-copy`,
+		`data-bm-collapse`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("页面缺少片段 %q", want)
