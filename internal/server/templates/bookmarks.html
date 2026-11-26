@@ -50,10 +50,15 @@
     </div>
     {{else if .RecordsJSON}}
 
-    <!-- 工具栏：搜索 / 视图切换 / 排序 / 导出 / 批量管理，全部前端完成、不额外请求后端 -->
+    <!-- 工具栏：搜索 / 视频筛选 / 视图切换 / 排序 / 导入导出 / 批量管理，全部前端完成、不额外请求后端 -->
     <div class="bm-toolbar" data-bookmarks-toolbar>
       <input type="search" class="bm-search-input" data-bm-search
-             placeholder="搜索备注或视频名…" aria-label="搜索书签">
+             placeholder="搜索备注或视频名…（按 / 聚焦）" aria-label="搜索书签">
+      <label class="bm-sort-label">视频
+        <select class="bm-sort-select" data-bm-video-filter aria-label="按视频筛选">
+          <option value="">全部视频</option>
+        </select>
+      </label>
       <div class="bm-view-switch" role="group" aria-label="视图切换">
         <button type="button" class="bm-view-btn" data-bm-view="group" aria-pressed="false">分组</button>
         <button type="button" class="bm-view-btn" data-bm-view="flat" aria-pressed="false">平铺</button>
@@ -65,9 +70,11 @@
         </select>
       </label>
       <div class="bm-export-wrap">
+        <button type="button" class="btn-secondary bm-export-btn" data-bm-import>导入 JSON</button>
         <button type="button" class="btn-secondary bm-export-btn" data-bm-export="json">导出 JSON</button>
         <button type="button" class="btn-secondary bm-export-btn" data-bm-export="markdown">导出 Markdown</button>
       </div>
+      <input type="file" accept="application/json,.json" data-bm-import-file hidden>
     </div>
 
     <!-- 批量管理条：勾选任意书签后出现，支持全选与批量删除 -->

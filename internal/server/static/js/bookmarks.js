@@ -1,7 +1,7 @@
 /*
- * 全局书签页控制器：页内管理（编辑备注/删除/批量删除）、备注与视频名搜索、
- * 分组/平铺视图切换、排序、JSON/Markdown 导出、复制跳转链接、分组折叠，
- * 以及视图/排序/折叠偏好的本地持久化。
+ * 全局书签页控制器：页内管理（行内编辑/删除/批量删除/导入）、备注与视频名搜索、
+ * 按视频筛选、分组/平铺视图切换、排序、JSON/Markdown 导出、复制跳转链接、分组折叠、
+ * 键盘快捷键，以及视图/排序/折叠偏好的本地持久化。
  * 数据唯一来源是模板注入的 data-bookmarks-json 数据岛；
  * 写操作复用播放页同一套书签 API，本文件不引入任何后端新接口。
  */
@@ -46,12 +46,15 @@
 
   var initView = prefGet(PREF_VIEW) === 'flat' ? 'flat' : 'group';
   var initSort = prefGet(PREF_SORT) === 'position' ? 'position' : 'recent';
-  var state = { view: initView, sort: initSort, query: '' };
+  var state = { view: initView, sort: initSort, query: '', videoId: '' };
   var selected = new Set();               // 勾选的书签 id（跨搜索保留，删除后清理）
   var collapsed = new Set(prefGetJSON(PREF_COLLAPSED)); // 折叠的视频 ID
+  var editingId = null;                   // 当前行内编辑的书签 id，同时阻止重复进入
 
   var searchInput = document.querySelector('[data-bm-search]');
   var sortSelect = document.querySelector('[data-bm-sort]');
+  var videoFilter = document.querySelector('[data-bm-video-filter]');
+  var importFile = document.querySelector('[data-bm-import-file]');
   var noResultEl = document.querySelector('[data-bm-no-result]');
   var toastEl = document.querySelector('[data-bm-toast]');
   var batchBar = document.querySelector('[data-bm-batch-bar]');
@@ -79,6 +82,7 @@
   }
 
   function matchesQuery(rec) {
+    if (state.videoId && rec.videoId !== state.videoId) return false;
     if (!state.query) return true;
     var q = state.query.toLowerCase();
     return (rec.note || '').toLowerCase().indexOf(q) >= 0 ||
@@ -139,7 +143,7 @@
     return '<button type="button" class="bm-action" data-bm-copy data-id="' + rec.id +
       '" title="复制跳转链接">复制</button>' +
       '<button type="button" class="bm-action" data-bm-edit data-id="' + rec.id +
-      '" data-video="' + escapeHTML(rec.videoId) + '" title="编辑备注">编辑</button>' +
+      '" data-video="' + escapeHTML(rec.videoId) + '" title="行内编辑备注（Enter 保存，Esc 取消）">编辑</button>' +
       '<button type="button" class="bm-action bm-action-danger" data-bm-delete data-id="' +
       rec.id + '" data-video="' + escapeHTML(rec.videoId) + '" title="删除书签">删除</button>';
   }
@@ -149,20 +153,34 @@
       '"' + (selected.has(rec.id) ? ' checked' : '') + ' aria-label="选择该书签">';
   }
 
-  function noteHTML(rec, flat) {
-    var cls = flat ? 'bm-note' : 'bm-note';
+  function noteSpanHTML(rec) {
     return rec.note
-      ? '<span class="' + cls + '" data-note-text title="' + escapeHTML(rec.note) + '">' + escapeHTML(rec.note) + '</span>'
-      : '<span class="' + cls + ' bm-note-empty" data-note-text>无备注</span>';
+      ? '<span class="bm-note" data-note-text title="' + escapeHTML(rec.note) + '">' + escapeHTML(rec.note) + '</span>'
+      : '<span class="bm-note bm-note-empty" data-note-text>无备注</span>';
+  }
+
+  // 行内编辑态：输入框替换备注文案，保存/取消按钮替换编辑按钮
+  function editRowHTML(rec) {
+    return '<input type="text" class="bm-edit-input" data-bm-edit-input maxlength="500" value="' +
+      escapeHTML(rec.note || '') + '" aria-label="编辑书签备注">' +
+      '<button type="button" class="bm-action bm-edit-save" data-bm-edit-save data-id="' + rec.id +
+      '" data-video="' + escapeHTML(rec.videoId) + '" title="保存（Enter）">保存</button>' +
+      '<button type="button" class="bm-action" data-bm-edit-cancel title="取消（Esc）">取消</button>';
+  }
+
+  function noteAreaHTML(rec) {
+    if (editingId === rec.id) return editRowHTML(rec);
+    return noteSpanHTML(rec) + itemButtonsHTML(rec);
   }
 
   function itemHTML(rec) {
-    return '<li class="bm-item" data-bookmark-item data-bookmark-id="' + rec.id +
+    return '<li class="bm-item' + (editingId === rec.id ? ' is-editing' : '') +
+      '" data-bookmark-item data-bookmark-id="' + rec.id +
       '" data-video-id="' + escapeHTML(rec.videoId) + '">' +
       checkHTML(rec) +
       '<a class="bm-time" href="' + escapeHTML(rec.seekUrl) +
       '" data-bookmark-seek title="跳转到 ' + rec.timeText + '">' + rec.timeText + '</a>' +
-      noteHTML(rec, false) + itemButtonsHTML(rec) + '</li>';
+      noteAreaHTML(rec) + '</li>';
   }
 
   function renderGroupView(list) {
@@ -183,19 +201,31 @@
         (isCollapsed ? ' hidden' : '') + '>' + items + '</ul></section>';
     }).join('');
     groupView.innerHTML = html;
+    focusEditInput();
   }
 
   function renderFlatView(list) {
     var sorted = sortFlat(list);
     var html = '<ul class="bm-list bm-global-list bm-flat-list">' + sorted.map(function (rec) {
-      return '<li class="bm-item bm-flat-item" data-bookmark-item data-bookmark-id="' + rec.id + '">' +
+      return '<li class="bm-item bm-flat-item' + (editingId === rec.id ? ' is-editing' : '') +
+        '" data-bookmark-item data-bookmark-id="' + rec.id + '">' +
         checkHTML(rec) +
         '<a class="bm-time" href="' + escapeHTML(rec.seekUrl) +
         '" data-bookmark-seek title="跳转到 ' + rec.timeText + '">' + rec.timeText + '</a>' +
         '<span class="bm-flat-video" title="' + escapeHTML(rec.videoName) + '">' +
-        escapeHTML(rec.videoName) + '</span>' + noteHTML(rec, true) + itemButtonsHTML(rec) + '</li>';
+        escapeHTML(rec.videoName) + '</span>' + noteAreaHTML(rec) + '</li>';
     }).join('') + '</ul>';
     flatView.innerHTML = html;
+    focusEditInput();
+  }
+
+  function focusEditInput() {
+    if (editingId === null) return;
+    var input = document.querySelector('[data-bm-edit-input]');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
   }
 
   // 同步批量管理条：显隐、已选计数、全选框状态、删除按钮可用性
@@ -208,6 +238,20 @@
     batchDeleteBtn.disabled = totalSelected === 0;
     selectAllCb.checked = visibleIds.size > 0 && visibleSelected.length === visibleIds.size;
     selectAllCb.indeterminate = visibleSelected.length > 0 && visibleSelected.length < visibleIds.size;
+  }
+
+  // 视频筛选下拉只由全量数据构建一次，筛选变化不重建选项，避免打断选择
+  function populateVideoFilter() {
+    if (!videoFilter) return;
+    var seen = {};
+    var options = ['<option value="">全部视频</option>'];
+    records.forEach(function (r) {
+      if (seen[r.videoId]) return;
+      seen[r.videoId] = true;
+      options.push('<option value="' + escapeHTML(r.videoId) + '">' + escapeHTML(r.videoName) + '</option>');
+    });
+    videoFilter.innerHTML = options.join('');
+    videoFilter.value = state.videoId;
   }
 
   function render() {
@@ -245,18 +289,25 @@
     return '/api/v1/videos/' + encodeURIComponent(rec.videoId) + '/bookmarks/' + rec.id;
   }
 
-  function editNote(id) {
-    var rec = records.find(function (r) { return r.id === id; });
-    if (!rec) return;
-    var note = prompt('编辑书签备注（可留空）', rec.note || '');
-    if (note === null) return;
-    bmFetch(bookmarkURL(rec), {
+  // ---- 行内编辑：进入/保存/取消，替代 prompt 弹窗 ----
+  function enterEdit(id) {
+    if (editingId !== null) return;
+    if (!records.some(function (r) { return r.id === id; })) return;
+    editingId = id;
+    render();
+  }
+  function exitEdit() {
+    editingId = null;
+  }
+  function saveEdit(id, videoId, note) {
+    bmFetch('/api/v1/videos/' + encodeURIComponent(videoId) + '/bookmarks/' + id, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ note: note })
     }).then(function (data) {
       var idx = records.findIndex(function (r) { return r.id === id; });
       if (idx >= 0 && data.bookmark) records[idx].note = data.bookmark.note || '';
+      exitEdit();
       render();
       showToast('书签备注已更新');
     }).catch(function (err) {
@@ -278,7 +329,9 @@
       var okSet = new Set(okIds);
       records = records.filter(function (r) { return !okSet.has(r.id); });
       okIds.forEach(function (id) { selected.delete(id); });
+      if (editingId !== null && okSet.has(editingId)) exitEdit();
       if (records.length === 0) { location.reload(); return; }
+      populateVideoFilter();
       render();
       showToast(failCount ? '已删除 ' + okIds.length + ' 条，' + failCount + ' 条失败' : '书签已删除');
     });
@@ -308,12 +361,67 @@
     ta.remove();
   }
 
+  // ---- 导入：解析导出格式的 JSON，逐条 POST，同视频同时间点去重 ----
+  function importBookmarks(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var items;
+      try {
+        items = JSON.parse(String(reader.result || ''));
+        if (!Array.isArray(items)) throw new Error('格式不符');
+      } catch (err) {
+        alert('导入失败：文件不是合法的书签 JSON 数组');
+        return;
+      }
+      // 现有书签指纹：videoId + 四舍五入秒数，与服务端跳转取整口径一致
+      var existing = new Set(records.map(function (r) {
+        return r.videoId + '#' + Math.round(r.position);
+      }));
+      var valid = items.filter(function (it) {
+        return it && typeof it.videoId === 'string' &&
+          typeof it.position === 'number' && isFinite(it.position) && it.position >= 0;
+      });
+      var skipped = items.length - valid.length;
+      var toCreate = valid.filter(function (it) {
+        var fp = it.videoId + '#' + Math.round(it.position);
+        if (existing.has(fp)) return false;
+        existing.add(fp); // 同一文件内重复也只导一条
+        return true;
+      });
+      if (!toCreate.length) {
+        showToast('没有可导入的新书签（' + skipped + ' 条格式不符，其余重复）');
+        return;
+      }
+      if (!confirm('将导入 ' + toCreate.length + ' 条书签' +
+        (skipped ? '（另跳过 ' + skipped + ' 条格式不符）' : '') + '，是否继续？')) return;
+      Promise.all(toCreate.map(function (it) {
+        return bmFetch('/api/v1/videos/' + encodeURIComponent(it.videoId) + '/bookmarks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ position: it.position, note: typeof it.note === 'string' ? it.note : '' })
+        }).then(function (data) {
+          return { ok: true, data: data, src: it };
+        }).catch(function () { return { ok: false, src: it }; });
+      })).then(function (results) {
+        var ok = results.filter(function (r) { return r.ok; });
+        var fail = results.length - ok.length;
+        if (!ok.length) { alert('导入失败：' + fail + ' 条全部失败（视频可能已移除）'); return; }
+        showToast('已导入 ' + ok.length + ' 条' + (fail ? '，失败 ' + fail + ' 条' : '') + '，正在刷新…');
+        setTimeout(function () { location.reload(); }, 800);
+      });
+    };
+    reader.readAsText(file);
+  }
+
   // 事件委托：分组与平铺两套 DOM 共用一套管理逻辑
   document.querySelector('[data-bookmarks-page]').addEventListener('click', function (e) {
     var copyBtn = e.target.closest('[data-bm-copy]');
     var editBtn = e.target.closest('[data-bm-edit]');
     var delBtn = e.target.closest('[data-bm-delete]');
     var collapseBtn = e.target.closest('[data-bm-collapse]');
+    var saveBtn = e.target.closest('[data-bm-edit-save]');
+    var cancelBtn = e.target.closest('[data-bm-edit-cancel]');
+    var importBtn = e.target.closest('[data-bm-import]');
     if (copyBtn) {
       e.preventDefault();
       copyLink(Number(copyBtn.dataset.id));
@@ -321,13 +429,31 @@
     }
     if (editBtn) {
       e.preventDefault();
-      editNote(Number(editBtn.dataset.id));
+      enterEdit(Number(editBtn.dataset.id));
+      return;
+    }
+    if (saveBtn) {
+      e.preventDefault();
+      var input = saveBtn.closest('.bm-item').querySelector('[data-bm-edit-input]');
+      saveEdit(Number(saveBtn.dataset.id), saveBtn.dataset.video, input ? input.value : '');
+      return;
+    }
+    if (cancelBtn) {
+      e.preventDefault();
+      exitEdit();
+      render();
       return;
     }
     if (delBtn) {
       e.preventDefault();
       var rec = records.find(function (r) { return r.id === Number(delBtn.dataset.id); });
       removeBookmarks([rec ? rec.id : Number(delBtn.dataset.id)]);
+      return;
+    }
+    if (importBtn) {
+      e.preventDefault();
+      importFile.value = '';
+      importFile.click();
       return;
     }
     if (collapseBtn) {
@@ -347,6 +473,46 @@
         if (listEl) listEl.hidden = true;
       }
       prefSetJSON(PREF_COLLAPSED, Array.from(collapsed));
+    }
+  });
+
+  // 行内编辑框键盘：Enter 保存、Esc 取消
+  document.querySelector('[data-bookmarks-page]').addEventListener('keydown', function (e) {
+    if (e.target.matches('[data-bm-edit-input]')) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var saveBtn = e.target.closest('.bm-item').querySelector('[data-bm-edit-save]');
+        if (saveBtn) saveBtn.click();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        exitEdit();
+        render();
+      }
+      return;
+    }
+    // 全局快捷键（输入态除外）：/ 聚焦搜索、Esc 清空、Delete 删除勾选、1/2 切视图
+    var typing = e.target.matches('input, select, textarea');
+    if (e.key === '/' && !typing) {
+      e.preventDefault();
+      searchInput.focus();
+    } else if (e.key === 'Escape') {
+      if (editingId !== null) { exitEdit(); render(); return; }
+      if (document.activeElement === searchInput && searchInput.value) {
+        searchInput.value = '';
+        state.query = '';
+        render();
+      } else if (selected.size) {
+        selected.clear();
+        render();
+      }
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && !typing && selected.size) {
+      e.preventDefault();
+      var ids = records.filter(function (r) { return selected.has(r.id); }).map(function (r) { return r.id; });
+      removeBookmarks(ids);
+    } else if (e.key === '1' && !typing) {
+      switchView('group');
+    } else if (e.key === '2' && !typing) {
+      switchView('flat');
     }
   });
 
@@ -372,10 +538,22 @@
     removeBookmarks(ids);
   });
 
-  // ---- 搜索 / 视图 / 排序（偏好同步写入 localStorage）----
+  if (importFile) {
+    importFile.addEventListener('change', function () {
+      if (importFile.files && importFile.files[0]) importBookmarks(importFile.files[0]);
+    });
+  }
+
+  // ---- 搜索 / 视频筛选 / 视图 / 排序（视图与排序偏好同步写入 localStorage）----
   if (searchInput) {
     searchInput.addEventListener('input', function () {
       state.query = searchInput.value.trim();
+      render();
+    });
+  }
+  if (videoFilter) {
+    videoFilter.addEventListener('change', function () {
+      state.videoId = videoFilter.value;
       render();
     });
   }
@@ -387,6 +565,13 @@
       render();
     });
   }
+  function switchView(view) {
+    if (state.view === view) return;
+    state.view = view;
+    prefSet(PREF_VIEW, state.view);
+    applyViewButtons();
+    render();
+  }
   function applyViewButtons() {
     document.querySelectorAll('[data-bm-view]').forEach(function (b) {
       var active = b.dataset.bmView === state.view;
@@ -395,15 +580,10 @@
     });
   }
   document.querySelectorAll('[data-bm-view]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      state.view = btn.dataset.bmView;
-      prefSet(PREF_VIEW, state.view);
-      applyViewButtons();
-      render();
-    });
+    btn.addEventListener('click', function () { switchView(btn.dataset.bmView); });
   });
 
-  // ---- 导出：纯前端生成文件，导出范围与当前搜索结果一致 ----
+  // ---- 导出：纯前端生成文件，导出范围与当前搜索/筛选结果一致 ----
   function download(filename, mime, content) {
     var blob = new Blob([content], { type: mime + ';charset=utf-8' });
     var url = URL.createObjectURL(blob);
@@ -463,6 +643,7 @@
     });
   });
 
+  populateVideoFilter();
   applyViewButtons();
   render();
 })();

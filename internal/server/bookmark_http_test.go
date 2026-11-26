@@ -322,9 +322,12 @@ func TestBookmarksGlobalPageToolbarAndDataIsland(t *testing.T) {
 	for _, want := range []string{
 		`data-bookmarks-toolbar`,
 		`data-bm-search`,
+		`data-bm-video-filter`,
 		`data-bm-view="group"`,
 		`data-bm-view="flat"`,
 		`data-bm-sort`,
+		`data-bm-import`,
+		`data-bm-import-file`,
 		`data-bm-export="json"`,
 		`data-bm-export="markdown"`,
 		`data-bookmarks-json`,
