@@ -357,6 +357,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		Tags           []store.Tag // 当前视频的标签
 		AllTags        []store.Tag // 全库标签，供输入框自动补全
 		Related        []shelfCard // 同目录相关视频（排除自身，无同目录伙伴时为空，模板不渲染区块）
+		WatchLater     bool        // 当前视频是否已在稍后再看清单
 	}{
 		basePage:       basePage{Title: v.Name, AuthEnabled: s.authEnabled()},
 		Video:          v,
@@ -378,6 +379,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		Tags:           videoTags,
 		AllTags:        allTags,
 		Related:        s.buildRelatedVideos(v),
+		WatchLater:     state.WatchLater[v.ID],
 	})
 }
 

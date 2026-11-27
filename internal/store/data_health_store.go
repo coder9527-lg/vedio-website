@@ -18,6 +18,7 @@ var orphanTables = []struct {
 	{"playlist_item", "playlist_item"},
 	{"bookmarks", "bookmarks"},
 	{"skip_settings", "skip_settings"},
+	{"watch_later", "watch_later"},
 	{"watch_events", "watch_events"},
 	{"video_tag", "video_tag"},
 }
@@ -39,6 +40,7 @@ type OrphanReport struct {
 	PlaylistItem int64
 	Bookmarks    int64
 	SkipSettings int64
+	WatchLater   int64
 	WatchEvents  int64
 	VideoTag     int64
 }
@@ -56,6 +58,8 @@ func (r *OrphanReport) orphanField(table string) *int64 {
 		return &r.Bookmarks
 	case "skip_settings":
 		return &r.SkipSettings
+	case "watch_later":
+		return &r.WatchLater
 	case "watch_events":
 		return &r.WatchEvents
 	case "video_tag":
@@ -65,10 +69,10 @@ func (r *OrphanReport) orphanField(table string) *int64 {
 	}
 }
 
-// Total 返回七类孤儿记录总数，供页面顶部汇总与一键清理结果使用。
+// Total 返回八类孤儿记录总数，供页面顶部汇总与一键清理结果使用。
 func (r OrphanReport) Total() int64 {
 	return r.Progress + r.Favorites + r.PlaylistItem + r.Bookmarks +
-		r.SkipSettings + r.WatchEvents + r.VideoTag
+		r.SkipSettings + r.WatchLater + r.WatchEvents + r.VideoTag
 }
 
 // OrphanCount 按白名单逻辑表名返回报告中的对应分区计数；非法表名返回错误。

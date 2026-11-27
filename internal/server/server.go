@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /smart", s.handleSmartPlaylists)
 	mux.HandleFunc("GET /smart/{rule}", s.handleSmartPlaylistDetail)
 	mux.HandleFunc("GET /history", s.handleHistory)
+	mux.HandleFunc("GET /watch-later", s.handleWatchLaterPage)
 	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
 	mux.HandleFunc("GET /review", s.handleReview)
 	mux.HandleFunc("POST /history/clear", s.handleClearHistory)
@@ -176,6 +177,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/favorites", s.handleFavoriteList)
 	mux.HandleFunc("POST /api/v1/videos/{id}/favorite", s.handleFavoriteSet)
 	mux.HandleFunc("GET /api/v1/videos/{id}/favorite", s.handleFavoriteGet)
+	// 稍后再看收件箱（仅在启用持久化时可用，否则返回 503）
+	mux.HandleFunc("GET /watch-later/list", s.handleWatchLaterList)
+	mux.HandleFunc("POST /api/v1/videos/{id}/watch-later", s.handleWatchLaterAdd)
+	mux.HandleFunc("DELETE /api/v1/videos/{id}/watch-later", s.handleWatchLaterRemove)
+	mux.HandleFunc("GET /api/v1/videos/{id}/watch-later", s.handleWatchLaterGet)
 
 	// 视频标签（仅在启用持久化时可用，否则返回 503）
 	mux.HandleFunc("GET /api/v1/tags", s.handleTagList)

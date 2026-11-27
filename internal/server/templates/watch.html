@@ -105,6 +105,11 @@
               data-fav="{{if index .State.Favs .Video.ID}}true{{else}}false{{end}}">
         {{if index .State.Favs .Video.ID}}⭐ 已收藏{{else}}☆ 收藏{{end}}
       </button>
+      <button type="button" id="wl-btn" class="btn-secondary"
+              data-id="{{.Video.ID}}"
+              data-wl="{{if .WatchLater}}true{{else}}false{{end}}">
+        {{if .WatchLater}}🕓 已加入待看{{else}}＋ 稍后再看{{end}}
+      </button>
       <button type="button" class="btn-secondary pl-entry-btn" id="pl-watch-add"
               data-video-id="{{.Video.ID}}">＋ 清单</button>
       {{end}}
@@ -1655,6 +1660,34 @@
             alert('收藏操作失败: ' + err);
           } finally {
             favBtn.disabled = false;
+          }
+        });
+      }
+
+      // ---- 稍后再看：加入/移出收件箱 ----
+      const wlBtn = document.getElementById('wl-btn');
+      if (wlBtn) {
+        const renderWL = (on) => {
+          wlBtn.dataset.wl = String(on);
+          wlBtn.textContent = on ? '🕓 已加入待看' : '＋ 稍后再看';
+        };
+        wlBtn.addEventListener('click', async () => {
+          const on = wlBtn.dataset.wl === 'true';
+          wlBtn.disabled = true;
+          try {
+            const res = await fetch('/api/v1/videos/' + videoId + '/watch-later', {
+              method: on ? 'DELETE' : 'POST',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            if (res.status === 401) { location.href = '/login'; return; }
+            if (res.status === 503) { alert('未启用持久化（DB_PATH 未配置）'); return; }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            renderWL(data.watchLater);
+          } catch (err) {
+            alert('稍后再看操作失败: ' + err);
+          } finally {
+            wlBtn.disabled = false;
           }
         });
       }

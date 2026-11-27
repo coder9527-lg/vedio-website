@@ -144,6 +144,11 @@ CREATE TABLE IF NOT EXISTS skip_settings (
     enabled       INTEGER NOT NULL DEFAULT 1,
     updated_at    TIMESTAMP NOT NULL
 );
+CREATE TABLE IF NOT EXISTS watch_later (
+    video_id TEXT PRIMARY KEY,
+    added_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_watch_later_added ON watch_later(added_at DESC);
 CREATE TABLE IF NOT EXISTS bookmarks (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     video_id   TEXT NOT NULL,
@@ -580,6 +585,9 @@ func (s *Store) Prune(existing map[string]bool) error {
 		if err != nil {
 			return err
 		}
+		if _, err := s.db.Exec(`DELETE FROM watch_later`); err != nil {
+			return err
+		}
 		_, err = s.db.Exec(`DELETE FROM bookmarks`)
 		if err != nil {
 			return err
@@ -613,6 +621,10 @@ func (s *Store) Prune(existing map[string]bool) error {
 	}
 	if _, err := s.db.Exec(
 		`DELETE FROM skip_settings WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(
+		`DELETE FROM watch_later WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(
