@@ -1115,6 +1115,70 @@ a.smart-rule-card { color: inherit; text-decoration: none; justify-content: spac
 .related-row { align-items: flex-start; }
 .related-shelf { margin-bottom: 20px; }
 
+/* 相关视频卡片包裹层：承接横滑行宽度，让入队按钮可绝对定位在卡片右上角 */
+.queue-card-wrap {
+  position: relative;
+  flex: 0 0 240px;
+  scroll-snap-align: start;
+}
+.queue-card-wrap .shelf-card { display: block; }
+@media (max-width: 600px) {
+  .queue-card-wrap { flex-basis: 200px; }
+}
+
+/* 卡片右上角「＋ 队列」按钮 */
+.queue-add-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  padding: 4px 9px;
+  font-size: 12px;
+  line-height: 1.2;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(8, 15, 30, .72);
+  color: var(--text);
+  backdrop-filter: blur(4px);
+}
+.queue-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 播放队列面板 */
+.queue-shelf { margin-bottom: 20px; }
+.queue-shelf .shelf-title { display: flex; align-items: center; gap: 8px; }
+.queue-count { font-size: 13px; color: var(--muted); font-weight: 400; }
+.queue-clear { margin-left: auto; padding: 3px 10px; font-size: 12px; }
+.queue-list { list-style: none; margin: 0; padding: 0; }
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+.queue-item.is-current { border-color: var(--accent); }
+.queue-index { min-width: 22px; text-align: center; font-size: 12px; color: var(--muted); }
+.queue-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-remove {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.queue-remove:hover { border-color: var(--danger, #ef4444); color: var(--danger, #ef4444); }
+
 /* 历史页：单条删除角标。包裹层接管 shelf-card 在横滑行中的宽度与定位 */
 .history-card-wrap {
   position: relative;

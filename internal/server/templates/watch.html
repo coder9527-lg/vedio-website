@@ -18,7 +18,73 @@
       }
     })();
   </script>
+  <!-- 播放器偏好：必须早于所有模块脚本定义，字幕/缩放/倍速等模块在解析期即读取 -->
+  <script>
+    window.PlayerPrefs = (() => {
+      const KEY = 'vw:prefs';
+      const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];   // 与倍速菜单白名单一致
+      const CUES = ['cue-sm', 'cue-md', 'cue-lg'];  // 与字号菜单 class 白名单一致
+      const FITS = ['contain', 'cover', 'fill'];    // 与画面缩放菜单 data-fit 白名单一致
+      const ROTS = [0, 90, 180, 270];                // 与画面旋转菜单 data-rot 白名单一致
+      // 隐私模式等场景 localStorage 写入可能抛错，此时降级为仅内存态，不影响播放
+      let mem = {};
+      let cache = null; // 只 parse 一次；null 表示尚未加载
+
+      function rawGet() {
+        try { return window.localStorage.getItem(KEY); } catch (_) { return null; }
+      }
+      function rawSet(str) {
+        try { window.localStorage.setItem(KEY, str); } catch (_) { mem.__raw = str; }
+      }
+      function rawRemove() {
+        try { window.localStorage.removeItem(KEY); } catch (_) { /* 忽略 */ }
+        mem = {};
+      }
+      // load 读取并做字段级校验，坏字段只丢自己，根节点非法则整体视为无偏好
+      function load() {
+        if (cache) return cache;
+        let obj = null;
+        const raw = rawGet() || (mem.__raw !== undefined ? mem.__raw : null);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) obj = parsed;
+          } catch (_) { obj = null; }
+        }
+        const prefs = {};
+        if (obj) {
+          if (typeof obj.volume === 'number' && isFinite(obj.volume)) {
+            prefs.volume = Math.min(1, Math.max(0, obj.volume));
+          }
+          if (typeof obj.muted === 'boolean') prefs.muted = obj.muted;
+          if (typeof obj.rate === 'number' && RATES.includes(obj.rate)) prefs.rate = obj.rate;
+          if (typeof obj.cue === 'string' && CUES.includes(obj.cue)) prefs.cue = obj.cue;
+          if (typeof obj.videoFit === 'string' && FITS.includes(obj.videoFit)) prefs.videoFit = obj.videoFit;
+          if (typeof obj.videoRot === 'number' && ROTS.includes(obj.videoRot)) prefs.videoRot = obj.videoRot;
+          // subLabel 允许 null（用户明确关闭字幕）；undefined 表示从未设置，调用方需区分
+          if (obj.subLabel === null || typeof obj.subLabel === 'string') prefs.subLabel = obj.subLabel;
+        }
+        cache = prefs;
+        return cache;
+      }
+      function get(key) { return load()[key]; }
+      // getSubLabel 专门暴露给字幕模块：null=明确关闭，字符串=指定轨道，undefined=从未设置
+      function getSubLabel() { return load().subLabel; }
+      function save(patch) {
+        const merged = Object.assign(load(), patch);
+        cache = merged;
+        rawSet(JSON.stringify(merged));
+      }
+      function reset() {
+        cache = {};
+        rawRemove();
+      }
+      return { get, getSubLabel, save, reset };
+    })();
+  </script>
   <script src="/static/js/theme.js" defer></script>
+  <!-- 播放队列：localStorage 维护、相关视频一键入队、播完优先连播队首 -->
+  <script src="/static/js/queue.js" defer></script>
   <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
   <link rel="manifest" href="/static/manifest.webmanifest">
   <meta name="theme-color" content="#0f172a">
@@ -50,7 +116,12 @@
     </div>
   </header>
 
-  <main class="container watch-container">
+  <!-- data-watch-* 供播放队列脚本读取当前视频；data-next-* 为服务端连播目标（空串表示无） -->
+  <main class="container watch-container"
+        data-watch-id="{{.Video.ID}}"
+        data-watch-name="{{if .Metadata.Title}}{{.Metadata.Title}}{{else}}{{.Video.Name}}{{end}}"
+        data-next-url="{{.AutoNextURL}}"
+        data-next-name="{{.AutoNextName}}">
     <div class="watch-title-row">
     <h2 class="watch-title" title="{{.Video.RelPath}}">{{if .Metadata.Title}}{{.Metadata.Title}}{{else}}{{.Video.Name}}{{end}}</h2>
     {{if .ScrapeOn}}
@@ -287,27 +358,43 @@
       <div class="shelf-row related-row">
         {{range .Related}}
         {{$v := .Video}}
-        <a class="shelf-card related-card" href="/watch/{{$v.ID}}">
-          <div class="thumb-wrap">
-            {{if and .Metadata .Metadata.PosterPath}}
-            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
-            {{else}}
-            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
-            {{end}}
-            <span class="ext-badge">{{$v.Ext}}</span>
-          </div>
-          <div class="meta">
-            {{if and .Metadata .Metadata.Title}}
-            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
-            {{else}}
-            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
-            {{end}}
-          </div>
-        </a>
+        <div class="queue-card-wrap">
+          <a class="shelf-card related-card" href="/watch/{{$v.ID}}">
+            <div class="thumb-wrap">
+              {{if and .Metadata .Metadata.PosterPath}}
+              <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+              {{else}}
+              <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+              {{end}}
+              <span class="ext-badge">{{$v.Ext}}</span>
+            </div>
+            <div class="meta">
+              {{if and .Metadata .Metadata.Title}}
+              <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}</h2>
+              {{else}}
+              <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+              {{end}}
+            </div>
+          </a>
+          <button type="button" class="queue-add-btn" data-queue-add
+                  data-id="{{$v.ID}}"
+                  data-name="{{if and .Metadata .Metadata.Title}}{{.Metadata.Title}}{{else}}{{$v.Name}}{{end}}"
+                  title="加入播放队列" aria-label="把 {{$v.Name}} 加入播放队列">＋ 队列</button>
+        </div>
         {{end}}
       </div>
     </section>
     {{end}}
+
+    <!-- 播放队列：纯前端 localStorage 维护，非空时由 queue.js 显示；条目可移除/清空，播完优先连播队首 -->
+    <section class="shelf queue-shelf" data-queue-panel hidden aria-label="播放队列">
+      <h2 class="shelf-title">
+        播放队列 <span class="queue-count" data-queue-count>0</span>
+        <button type="button" class="btn-secondary queue-clear" data-queue-clear>清空队列</button>
+      </h2>
+      <ul class="queue-list" data-queue-list></ul>
+    </section>
+    <div class="skip-toast" id="queue-toast" role="status" aria-live="polite" hidden></div>
 
     {{if .ScrapeOn}}
     <div id="scrape-modal" class="scrape-modal" hidden>
@@ -368,7 +455,7 @@
   <script src="/static/js/hls.min.js"></script>
   <script>
     (() => {
-      const videoId = {{printf "%q" .Video.ID}};
+      const videoId = {{.Video.ID}};
       const nativePlayable = {{.NativePlayable}};
       const player = document.getElementById('player');
       const directSrc = '/stream/' + videoId;
@@ -1277,12 +1364,12 @@
       const session = navigator.mediaSession;
       const MS_ALBUM = '个人视频库';
       // 刮削标题优先、文件名兜底；handler 保证 .Metadata 始终为非 nil 结构体，可直接判字段
-      const msTitle = {{if .Metadata.Title}}{{printf "%q" .Metadata.Title}}{{else}}{{printf "%q" .Video.Name}}{{end}};
-      const msArtist = {{if .Metadata.Original}}{{printf "%q" .Metadata.Original}}{{else}}{{printf "%q" .Video.RelPath}}{{end}};
+      const msTitle = {{if .Metadata.Title}}{{.Metadata.Title}}{{else}}{{.Video.Name}}{{end}};
+      const msArtist = {{if .Metadata.Original}}{{.Metadata.Original}}{{else}}{{.Video.RelPath}}{{end}};
       // artwork 与 <video poster> 同源：刮削海报优先，缩略图兜底
-      const msArtwork = {{if .Metadata.PosterPath}}{{printf "%q" (printf "/artwork/%s/poster" .Video.ID)}}{{else}}{{printf "%q" (printf "/thumb/%s" .Video.ID)}}{{end}};
+      const msArtwork = {{if .Metadata.PosterPath}}{{printf "/artwork/%s/poster" .Video.ID}}{{else}}{{printf "/thumb/%s" .Video.ID}}{{end}};
       // 连播上下文为空时输出空串，下一集/上一集动作置 null 让系统灰显
-      const msNextURL = {{if .AutoNextURL}}{{printf "%q" .AutoNextURL}}{{else}}""{{end}};
+      const msNextURL = {{if .AutoNextURL}}{{.AutoNextURL}}{{else}}""{{end}};
 
       // 个别旧浏览器不支持 MediaMetadata 构造：静默跳过元数据，媒体键仍可用
       try {
@@ -1454,7 +1541,7 @@
   {{if .StoreOn}}
   <script>
     (() => {
-      const videoId = {{printf "%q" .Video.ID}};
+      const videoId = {{.Video.ID}};
       const player = document.getElementById('player');
       const saveHint = document.getElementById('save-hint');
       const favBtn = document.getElementById('fav-btn');
@@ -1578,7 +1665,7 @@
   {{if .ScrapeOn}}
   <script>
     (() => {
-      const videoId = {{printf "%q" .Video.ID}};
+      const videoId = {{.Video.ID}};
       const btn = document.getElementById('scrape-btn');
       const modal = document.getElementById('scrape-modal');
       const body = document.getElementById('scrape-body');
@@ -1650,58 +1737,17 @@
   {{end}}
 
   {{if .AutoNextURL}}
+  <!-- 连播卡片：倒计时与跳转由 queue.js 统一接管（队列非空时优先播队列，否则用服务端下一集/列表下一项） -->
   <div id="auto-next" class="auto-next" hidden data-auto-next>
     <div class="auto-next-card">
       <p class="auto-next-title">本集播放完毕</p>
-      <p class="auto-next-desc"><span id="auto-next-count">5</span> 秒后自动播放下一个：{{.AutoNextName}}</p>
+      <p class="auto-next-desc"><span id="auto-next-count">5</span> 秒后自动播放下一个：<span id="auto-next-name">{{.AutoNextName}}</span></p>
       <div class="auto-next-actions">
         <button type="button" id="auto-next-go" class="btn-primary">立即播放</button>
         <button type="button" id="auto-next-cancel" class="btn-secondary">取消连播</button>
       </div>
     </div>
   </div>
-  <script>
-    (() => {
-      const nextURL = {{printf "%q" .AutoNextURL}};
-      const player = document.getElementById('player');
-      const box = document.getElementById('auto-next');
-      const countEl = document.getElementById('auto-next-count');
-      const goBtn = document.getElementById('auto-next-go');
-      const cancelBtn = document.getElementById('auto-next-cancel');
-      let timer = null;
-      let remain = 5;
-
-      function clearAutoTimer() {
-        if (timer) { clearInterval(timer); timer = null; }
-      }
-      function cancelAutoNext() {
-        clearAutoTimer();
-        box.hidden = true;
-        player.removeEventListener('play', cancelAutoNext);
-      }
-      function startAutoNext() {
-        box.hidden = false;
-        remain = 5;
-        countEl.textContent = remain;
-        clearAutoTimer();
-        timer = setInterval(() => {
-          remain -= 1;
-          if (remain <= 0) {
-            clearAutoTimer();
-            location.href = nextURL;
-            return;
-          }
-          countEl.textContent = remain;
-        }, 1000);
-      }
-
-      player.addEventListener('ended', startAutoNext);
-      // 用户手动重播本集时撤销连播
-      player.addEventListener('play', () => { if (!box.hidden) cancelAutoNext(); });
-      goBtn.addEventListener('click', () => location.href = nextURL);
-      cancelBtn.addEventListener('click', cancelAutoNext);
-    })();
-  </script>
   {{end}}
   {{if .ShowID}}
   <a class="back-to-show" href="/shows/{{.ShowID}}">← 返回剧集详情</a>
@@ -1729,7 +1775,7 @@
       const modal = document.getElementById('pl-add-modal');
       const pickList = document.getElementById('pl-pick-list');
       const newName = document.getElementById('pl-new-name');
-      const videoId = {{printf "%q" .Video.ID}};
+      const videoId = {{.Video.ID}};
       let opened = false;
 
       async function plFetch(url, options) {
@@ -1948,7 +1994,7 @@
   <script>
     (() => {
       const modal = document.getElementById('share-modal');
-      const videoId = {{printf "%q" .Video.ID}};
+      const videoId = {{.Video.ID}};
       const hoursSel = document.getElementById('share-hours');
       const passcodeInput = document.getElementById('share-passcode');
       const resultBox = document.getElementById('share-result');
@@ -2137,7 +2183,7 @@
       const saveBtn = document.getElementById('skip-save-btn');
       const clearBtn = document.getElementById('skip-clear-btn');
       const toast = document.getElementById('skip-toast');
-      const videoId = {{printf "%q" .Video.ID}};
+      const videoId = {{.Video.ID}};
       const apiURL = '/api/v1/videos/' + encodeURIComponent(videoId) + '/skip';
 
       // 引擎运行态：弹窗保存成功后同步更新，无需刷新页面
@@ -2319,71 +2365,6 @@
   </script>
   {{end}}
 
-  <!-- 播放器偏好：localStorage 全局记忆音量/静音、倍速、字幕轨道、字幕字号（原画与转码通用，无条件渲染） -->
-  <script>
-    window.PlayerPrefs = (() => {
-      const KEY = 'vw:prefs';
-      const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];   // 与倍速菜单白名单一致
-      const CUES = ['cue-sm', 'cue-md', 'cue-lg'];  // 与字号菜单 class 白名单一致
-      const FITS = ['contain', 'cover', 'fill'];    // 与画面缩放菜单 data-fit 白名单一致
-      const ROTS = [0, 90, 180, 270];                // 与画面旋转菜单 data-rot 白名单一致
-      // 隐私模式等场景 localStorage 写入可能抛错，此时降级为仅内存态，不影响播放
-      let mem = {};
-      let cache = null; // 只 parse 一次；null 表示尚未加载
-
-      function rawGet() {
-        try { return window.localStorage.getItem(KEY); } catch (_) { return null; }
-      }
-      function rawSet(str) {
-        try { window.localStorage.setItem(KEY, str); } catch (_) { mem.__raw = str; }
-      }
-      function rawRemove() {
-        try { window.localStorage.removeItem(KEY); } catch (_) { /* 忽略 */ }
-        mem = {};
-      }
-      // load 读取并做字段级校验，坏字段只丢自己，根节点非法则整体视为无偏好
-      function load() {
-        if (cache) return cache;
-        let obj = null;
-        const raw = rawGet() || (mem.__raw !== undefined ? mem.__raw : null);
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) obj = parsed;
-          } catch (_) { obj = null; }
-        }
-        const prefs = {};
-        if (obj) {
-          if (typeof obj.volume === 'number' && isFinite(obj.volume)) {
-            prefs.volume = Math.min(1, Math.max(0, obj.volume));
-          }
-          if (typeof obj.muted === 'boolean') prefs.muted = obj.muted;
-          if (typeof obj.rate === 'number' && RATES.includes(obj.rate)) prefs.rate = obj.rate;
-          if (typeof obj.cue === 'string' && CUES.includes(obj.cue)) prefs.cue = obj.cue;
-          if (typeof obj.videoFit === 'string' && FITS.includes(obj.videoFit)) prefs.videoFit = obj.videoFit;
-          if (typeof obj.videoRot === 'number' && ROTS.includes(obj.videoRot)) prefs.videoRot = obj.videoRot;
-          // subLabel 允许 null（用户明确关闭字幕）；undefined 表示从未设置，调用方需区分
-          if (obj.subLabel === null || typeof obj.subLabel === 'string') prefs.subLabel = obj.subLabel;
-        }
-        cache = prefs;
-        return cache;
-      }
-      function get(key) { return load()[key]; }
-      // getSubLabel 专门暴露给字幕模块：null=明确关闭，字符串=指定轨道，undefined=从未设置
-      function getSubLabel() { return load().subLabel; }
-      function save(patch) {
-        const merged = Object.assign(load(), patch);
-        cache = merged;
-        rawSet(JSON.stringify(merged));
-      }
-      function reset() {
-        cache = {};
-        rawRemove();
-      }
-      return { get, getSubLabel, save, reset };
-    })();
-  </script>
-
   <!-- 播放画面截图：canvas 抓当前帧直接下载 PNG（原画与转码通用，无条件渲染） -->
   <script>
     (() => {
@@ -2391,7 +2372,7 @@
       const btn = document.getElementById('screenshot-btn');
       const toast = document.getElementById('shot-toast');
       if (!player || !btn || !toast) return;
-      const videoName = {{printf "%q" .Video.Name}};
+      const videoName = {{.Video.Name}};
 
       function showToast(msg) {
         toast.textContent = msg;
@@ -2963,7 +2944,7 @@
   <div class="skip-toast" id="shot-toast" role="status" aria-live="polite" hidden></div>
   <script>
     (() => {
-      const videoId = {{printf "%q" .Video.ID}};
+      const videoId = {{.Video.ID}};
       const modal = document.getElementById('sub-mgr-modal');
       const listBox = document.getElementById('sub-mgr-list');
       const langSel = document.getElementById('sub-upload-lang');
@@ -3115,7 +3096,7 @@
       const form = document.getElementById('me-form');
       const errorBox = document.getElementById('me-error');
       const saveBtn = document.getElementById('me-save');
-      const videoId = {{printf "%q" .Video.ID}};
+      const videoId = {{.Video.ID}};
       const fields = {
         title: document.getElementById('me-title'),
         original: document.getElementById('me-original'),
