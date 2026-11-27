@@ -1381,6 +1381,67 @@ a.smart-rule-card { color: inherit; text-decoration: none; justify-content: spac
 }
 .bm-item.is-editing { flex-wrap: nowrap; }
 
+/* 统计概览条 */
+.bm-stats {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  margin-bottom: 12px;
+}
+.bm-stat {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text-muted, #94a3b8);
+  background: var(--card-bg, rgba(148,163,184,0.08));
+}
+.bm-stat b { color: var(--text); font-size: 15px; margin: 0 2px; }
+
+/* 分组头「清空该视频」按钮，靠右收敛 */
+.bm-clear-group { margin-left: auto; padding: 3px 10px; font-size: 12px; }
+
+/* 时间轴视图：每条视频一条横向轨道，刻度点按相对位置绝对定位 */
+.bm-tl-group { margin-bottom: 22px; }
+.bm-tl-track {
+  position: relative;
+  height: 46px;
+  margin: 14px 8px 4px;
+  border-bottom: 2px solid var(--border);
+}
+.bm-tl-dot {
+  position: absolute;
+  top: 50%;
+  width: 14px; height: 14px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent);
+  cursor: pointer;
+}
+.bm-tl-dot:hover { transform: translate(-50%, -50%) scale(1.25); z-index: 2; }
+.bm-tl-tip {
+  position: absolute;
+  bottom: 20px; left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--card-bg, #1e293b);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.bm-tl-dot:hover .bm-tl-tip { opacity: 1; }
+.bm-tl-scale {
+  display: flex; justify-content: space-between;
+  margin: 0 8px;
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+}
+
 /* 全局书签页：视频分组卡片，时间戳链接复用 .bm-time 的按钮样式 */
 .bm-group { margin-bottom: 18px; }
 .bm-group-title { display: flex; align-items: center; gap: 10px; font-size: 16px; }

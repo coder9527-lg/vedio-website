@@ -42,6 +42,9 @@ type bookmarkRecord struct {
 	Note      string  `json:"note"`
 	SeekURL   string  `json:"seekUrl"`
 	CreatedAt int64   `json:"createdAt"`
+	// Duration 来自播放进度（秒），未产生过播放记录时为 0，
+	// 时间轴视图据此把书签定位到视频相对位置，0 时前端降级为组内最大书签位置。
+	Duration float64 `json:"duration"`
 }
 
 // bookmarksPageData 是全局书签页视图模型。
@@ -71,6 +74,9 @@ func (s *Server) handleBookmarksPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "查询书签失败", http.StatusInternalServerError)
 		return
 	}
+
+	// 一次性加载播放进度，时间轴视图用其中的视频时长做相对定位
+	state := s.loadVideoState()
 
 	// ListAllBookmarks 已按 created_at 倒序，map 只做视频 ID → 分组下标的寻址，
 	// 分组首次出现的顺序即最新书签顺序，不依赖 map 迭代。
@@ -110,6 +116,7 @@ func (s *Server) handleBookmarksPage(w http.ResponseWriter, r *http.Request) {
 			Note:      bm.Note,
 			SeekURL:   seekURL,
 			CreatedAt: bm.CreatedAt.Unix(),
+			Duration:  state.Progress[bm.VideoID].Duration,
 		})
 	}
 

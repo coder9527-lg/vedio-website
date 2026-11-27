@@ -15,7 +15,8 @@
   var jsonEl = document.querySelector('[data-bookmarks-json]');
   var groupView = document.querySelector('[data-bm-group-view]');
   var flatView = document.querySelector('[data-bm-flat-view]');
-  if (!jsonEl || !groupView || !flatView) return;
+  var timelineView = document.querySelector('[data-bm-timeline-view]');
+  if (!jsonEl || !groupView || !flatView || !timelineView) return;
 
   var records = [];
   try {
@@ -44,7 +45,7 @@
     try { prefSet(key, JSON.stringify(val)); } catch (err) { /* 忽略 */ }
   }
 
-  var initView = prefGet(PREF_VIEW) === 'flat' ? 'flat' : 'group';
+  var initView = ['flat', 'timeline'].indexOf(prefGet(PREF_VIEW)) >= 0 ? prefGet(PREF_VIEW) : 'group';
   var initSort = prefGet(PREF_SORT) === 'position' ? 'position' : 'recent';
   var state = { view: initView, sort: initSort, query: '', videoId: '' };
   var selected = new Set();               // 勾选的书签 id（跨搜索保留，删除后清理）
@@ -142,6 +143,8 @@
   function itemButtonsHTML(rec) {
     return '<button type="button" class="bm-action" data-bm-copy data-id="' + rec.id +
       '" title="复制跳转链接">复制</button>' +
+      '<button type="button" class="bm-action" data-bm-copy-md data-id="' + rec.id +
+      '" title="复制单行 Markdown（时间链接 + 备注）">复制 MD</button>' +
       '<button type="button" class="bm-action" data-bm-edit data-id="' + rec.id +
       '" data-video="' + escapeHTML(rec.videoId) + '" title="行内编辑备注（Enter 保存，Esc 取消）">编辑</button>' +
       '<button type="button" class="bm-action bm-action-danger" data-bm-delete data-id="' +
@@ -196,7 +199,9 @@
         '" title="折叠/展开该视频">▾</button>' +
         '<a href="/watch/' + encodeURIComponent(g.videoId) +
         '" class="bm-group-link">' + escapeHTML(g.videoName) + '</a>' +
-        '<span class="bm-group-count">' + g.items.length + ' 条</span></h2>' +
+        '<span class="bm-group-count">' + g.items.length + ' 条</span>' +
+        '<button type="button" class="bm-action bm-action-danger bm-clear-group" data-bm-clear-group data-video="' +
+        escapeHTML(g.videoId) + '" title="删除该视频的全部书签">清空该视频</button></h2>' +
         '<ul class="bm-list bm-global-list" data-bm-group-list' +
         (isCollapsed ? ' hidden' : '') + '>' + items + '</ul></section>';
     }).join('');
@@ -259,14 +264,78 @@
     noResultEl.hidden = list.length !== 0;
     if (state.view === 'flat') {
       groupView.hidden = true;
+      timelineView.hidden = true;
       flatView.hidden = false;
       renderFlatView(list);
+    } else if (state.view === 'timeline') {
+      groupView.hidden = true;
+      flatView.hidden = true;
+      timelineView.hidden = false;
+      renderTimelineView(list);
     } else {
       flatView.hidden = true;
+      timelineView.hidden = true;
       groupView.hidden = false;
       renderGroupView(list);
     }
     syncBatchBar(list);
+    syncStats();
+  }
+
+  // 统计概览：总数、覆盖视频数、最近打点时间（按数据岛全量，不受搜索影响）
+  function syncStats() {
+    var marksEl = document.querySelector('[data-bm-stat-marks]');
+    var videosEl = document.querySelector('[data-bm-stat-videos]');
+    var latestEl = document.querySelector('[data-bm-stat-latest]');
+    if (marksEl) marksEl.textContent = String(records.length);
+    if (videosEl) {
+      videosEl.textContent = String(new Set(records.map(function (r) { return r.videoId; })).size);
+    }
+    if (latestEl) {
+      var latest = records.reduce(function (m, r) { return Math.max(m, r.createdAt || 0); }, 0);
+      latestEl.textContent = latest ? new Date(latest * 1000).toLocaleString('zh-CN', {
+        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+      }) : '—';
+    }
+  }
+
+  // 时间轴：每个视频一条横向轨道，刻度点按 position/时长 的百分比定位；
+  // 无播放时长（duration=0）时降级为组内最大书签位置，保证始终能铺满轨道。
+  function renderTimelineView(list) {
+    var groups = groupRecords(list);
+    var html = groups.map(function (g) {
+      var span = g.items.reduce(function (m, r) {
+        return Math.max(m, r.duration || 0, r.position);
+      }, 1);
+      var dots = g.items.map(function (r) {
+        var pct = Math.min(99, Math.max(0.5, (r.position / span) * 100));
+        return '<a class="bm-tl-dot" href="' + escapeHTML(r.seekUrl) +
+          '" style="left:' + pct.toFixed(2) + '%" title="' + r.timeText +
+          (r.note ? ' ' + escapeHTML(r.note) : '') + '" data-bookmark-seek>' +
+          '<span class="bm-tl-tip">' + r.timeText + (r.note ? ' · ' + escapeHTML(r.note) : '') + '</span></a>';
+      }).join('');
+      var scaleLabel = g.items.some(function (r) { return r.duration > 0; })
+        ? '总长 ' + formatClock(span)
+        : '无时长数据，按最早/最晚书签缩放';
+      return '<section class="bm-tl-group shelf" data-bookmark-group data-video-id="' +
+        escapeHTML(g.videoId) + '">' +
+        '<h2 class="shelf-title bm-group-title"><a href="/watch/' +
+        encodeURIComponent(g.videoId) + '" class="bm-group-link">' + escapeHTML(g.videoName) +
+        '</a><span class="bm-group-count">' + g.items.length + ' 条 · ' + scaleLabel + '</span></h2>' +
+        '<div class="bm-tl-track">' + dots + '</div>' +
+        '<div class="bm-tl-scale"><span>00:00</span><span>' + formatClock(span) + '</span></div>' +
+        '</section>';
+    }).join('');
+    timelineView.innerHTML = html || '<div class="empty"><p>该筛选条件下没有书签。</p></div>';
+  }
+
+  function formatClock(sec) {
+    var s = Math.max(0, Math.round(sec));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var r = s % 60;
+    var p = function (n) { return String(n).padStart(2, '0'); };
+    return (h ? h + ':' : '') + p(m) + ':' + p(r);
   }
 
   // ---- 写操作：与播放页 bmFetch 同口径处理 401/503 ----
@@ -361,6 +430,43 @@
     ta.remove();
   }
 
+  // 单条复制 Markdown：- [mm:ss](跳转链接) — 备注，备注中的竖线/换行转义
+  function copyMarkdown(id) {
+    var rec = records.find(function (r) { return r.id === id; });
+    if (!rec) return;
+    var note = (rec.note || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    var md = '- [' + rec.timeText + '](' + location.origin + rec.seekUrl + ')' +
+      (note ? ' — ' + note : '');
+    var done = function () { showToast('已复制 Markdown：' + rec.timeText); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(md).then(done).catch(function () { fallbackCopy(md, done); });
+    } else {
+      fallbackCopy(md, done);
+    }
+  }
+
+  // 清空某视频的全部书签：二次确认后并发删除，部分失败给出计数
+  function clearGroup(videoId) {
+    var targets = records.filter(function (r) { return r.videoId === videoId; });
+    if (!targets.length) return;
+    if (!confirm('确定删除「' + targets[0].videoName + '」的全部 ' + targets.length + ' 条书签？')) return;
+    Promise.all(targets.map(function (rec) {
+      return bmFetch(bookmarkURL(rec), { method: 'DELETE' })
+        .then(function () { return { id: rec.id, ok: true }; })
+        .catch(function () { return { id: rec.id, ok: false }; });
+    })).then(function (results) {
+      var okIds = results.filter(function (r) { return r.ok; }).map(function (r) { return r.id; });
+      var failCount = results.length - okIds.length;
+      var okSet = new Set(okIds);
+      records = records.filter(function (r) { return !okSet.has(r.id); });
+      okIds.forEach(function (id) { selected.delete(id); });
+      if (records.length === 0) { location.reload(); return; }
+      populateVideoFilter();
+      render();
+      showToast(failCount ? '已删除 ' + okIds.length + ' 条，' + failCount + ' 条失败' : '该视频书签已清空');
+    });
+  }
+
   // ---- 导入：解析导出格式的 JSON，逐条 POST，同视频同时间点去重 ----
   function importBookmarks(file) {
     var reader = new FileReader();
@@ -416,15 +522,22 @@
   // 事件委托：分组与平铺两套 DOM 共用一套管理逻辑
   document.querySelector('[data-bookmarks-page]').addEventListener('click', function (e) {
     var copyBtn = e.target.closest('[data-bm-copy]');
+    var copyMdBtn = e.target.closest('[data-bm-copy-md]');
     var editBtn = e.target.closest('[data-bm-edit]');
     var delBtn = e.target.closest('[data-bm-delete]');
     var collapseBtn = e.target.closest('[data-bm-collapse]');
     var saveBtn = e.target.closest('[data-bm-edit-save]');
     var cancelBtn = e.target.closest('[data-bm-edit-cancel]');
     var importBtn = e.target.closest('[data-bm-import]');
+    var clearGroupBtn = e.target.closest('[data-bm-clear-group]');
     if (copyBtn) {
       e.preventDefault();
       copyLink(Number(copyBtn.dataset.id));
+      return;
+    }
+    if (copyMdBtn) {
+      e.preventDefault();
+      copyMarkdown(Number(copyMdBtn.dataset.id));
       return;
     }
     if (editBtn) {
@@ -454,6 +567,11 @@
       e.preventDefault();
       importFile.value = '';
       importFile.click();
+      return;
+    }
+    if (clearGroupBtn) {
+      e.preventDefault();
+      clearGroup(clearGroupBtn.dataset.video);
       return;
     }
     if (collapseBtn) {
@@ -513,6 +631,8 @@
       switchView('group');
     } else if (e.key === '2' && !typing) {
       switchView('flat');
+    } else if (e.key === '3' && !typing) {
+      switchView('timeline');
     }
   });
 

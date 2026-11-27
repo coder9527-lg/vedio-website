@@ -325,6 +325,14 @@ func TestBookmarksGlobalPageToolbarAndDataIsland(t *testing.T) {
 		`data-bm-video-filter`,
 		`data-bm-view="group"`,
 		`data-bm-view="flat"`,
+		`data-bm-view="timeline"`,
+		`data-bm-timeline-view`,
+		`data-bm-stats`,
+		`data-bm-stat-marks`,
+		`data-bm-stat-videos`,
+		`data-bm-stat-latest`,
+		`data-bm-clear-group`,
+		`data-bm-copy-md`,
 		`data-bm-sort`,
 		`data-bm-import`,
 		`data-bm-import-file`,
@@ -366,7 +374,7 @@ func TestBookmarksGlobalPageToolbarAndDataIsland(t *testing.T) {
 		t.Fatalf("数据岛应含 1 条记录，实际 %d", len(recs))
 	}
 	rec := recs[0]
-	for _, key := range []string{"id", "videoId", "videoName", "position", "timeText", "note", "seekUrl", "createdAt"} {
+	for _, key := range []string{"id", "videoId", "videoName", "position", "timeText", "note", "seekUrl", "createdAt", "duration"} {
 		if _, ok := rec[key]; !ok {
 			t.Errorf("数据岛记录缺少字段 %q", key)
 		}
