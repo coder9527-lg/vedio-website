@@ -40,6 +40,10 @@ var tmplFuncs = template.FuncMap{
 	"joinStrings": func(items []string, sep string) string {
 		return strings.Join(items, sep)
 	},
+	// personURL 生成演员/导演聚合页链接，对人名做路径转义（空格、中文等）。
+	"personURL": func(name string) string {
+		return "/person/" + url.PathEscape(strings.TrimSpace(name))
+	},
 	// indexURL 生成保持 type/view/sort/q/genre/tag 六元组正交的首页链接；
 	// overrides 以 key/value 成对传入覆盖项，空值表示从 URL 中移除该参数。
 	"indexURL": func(current map[string]string, overrides ...string) string {

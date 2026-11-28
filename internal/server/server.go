@@ -114,6 +114,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /watch/{id}", s.handleWatch)
 	mux.HandleFunc("GET /shows/{id}", s.handleShowPage)
+	// 演员/导演聚合页：名字经路径变量传入，模板侧用 personURL 做路径转义
+	mux.HandleFunc("GET /person/{name}", s.handlePerson)
 	mux.HandleFunc("GET /stats", s.handleStats)
 	// 片库存储分析：纯内存聚合，不依赖 SQLite，未启用持久化也可访问
 	mux.HandleFunc("GET /library/storage", s.handleLibraryStorage)
