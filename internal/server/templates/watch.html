@@ -61,6 +61,8 @@
           if (typeof obj.cue === 'string' && CUES.includes(obj.cue)) prefs.cue = obj.cue;
           if (typeof obj.videoFit === 'string' && FITS.includes(obj.videoFit)) prefs.videoFit = obj.videoFit;
           if (typeof obj.videoRot === 'number' && ROTS.includes(obj.videoRot)) prefs.videoRot = obj.videoRot;
+          // 字幕音画偏移（秒）：负值提前、正值延后；仅接受有限数值，0 为默认无偏移
+          if (typeof obj.subDelay === 'number' && isFinite(obj.subDelay)) prefs.subDelay = obj.subDelay;
           // subLabel 允许 null（用户明确关闭字幕）；undefined 表示从未设置，调用方需区分
           if (obj.subLabel === null || typeof obj.subLabel === 'string') prefs.subLabel = obj.subLabel;
         }
@@ -790,6 +792,7 @@
           window.dispatchEvent(new CustomEvent('open-sub-mgr'));
         });
         dropdown.appendChild(mgr);
+        if (window.SubDelay) window.SubDelay.mount();
       }
       function select(label, btnEl) {
         currentLabel = label;
@@ -797,11 +800,13 @@
         tracks().forEach((t) => { t.mode = (t.label === label) ? 'showing' : 'disabled'; });
         dropdown.querySelectorAll('.track-item').forEach(el => el.classList.remove('current'));
         if (btnEl) btnEl.classList.add('current');
+        if (window.SubDelay) window.SubDelay.applyAll(); // 切轨后对新生效轨道重放偏移
       }
       function applyMode() {
         tracks().forEach((t) => {
           t.mode = (t.label === currentLabel) ? 'showing' : 'disabled';
         });
+        if (window.SubDelay) window.SubDelay.applyAll();
       }
       // 按全局偏好匹配当前可用轨道：命中则切换 currentLabel，未命中保持现状且不覆盖存储
       function applyPrefLabel() {
@@ -892,12 +897,14 @@
           window.dispatchEvent(new CustomEvent('open-sub-mgr'));
         });
         dropdown.appendChild(mgr);
+        if (window.SubDelay) window.SubDelay.mount();
       }
       function select(label, btnEl) {
         window.PlayerPrefs.save({ subLabel: label }); // null=用户明确关闭字幕
         tracks().forEach((t) => { t.mode = (t.label === label) ? 'showing' : 'disabled'; });
         dropdown.querySelectorAll('.track-item').forEach(el => el.classList.remove('current'));
         if (btnEl) btnEl.classList.add('current');
+        if (window.SubDelay) window.SubDelay.applyAll(); // 切轨后对新生效轨道重放偏移
       }
       const def = player.querySelector('track[default]');
       // 全局偏好优先于 <track default>：null=全关，字符串命中=该轨道，undefined=维持默认
@@ -957,6 +964,115 @@
     })();
   </script>
   {{end}}
+
+  <!-- 字幕音画同步：纯前端平移当前生效轨道的 VTTCue 时间轴，偏移量随播放器偏好记忆。
+       外挂 <track> 与转码内嵌轨道统一经 player.textTracks 处理，字幕菜单重建时回调 mount()。 -->
+  <script>
+    window.SubDelay = (() => {
+      const player = document.getElementById('player');
+      const dropdown = document.getElementById('sub-dropdown');
+      if (!player || !dropdown) return null;
+
+      // 每次调整步进 0.5 秒；负值=字幕提前，正值=字幕延后
+      const STEP = 0.5;
+      let delay = (() => {
+        const v = window.PlayerPrefs.get('subDelay');
+        return typeof v === 'number' ? v : 0;
+      })();
+      // 记录每条轨道已经施加过的偏移，换轨/重放时按差值增量平移，避免重复累加
+      const applied = new WeakMap();
+
+      function formatDelay(v) {
+        if (Math.abs(v) < 0.001) return '0.0s';
+        return (v > 0 ? '+' : '−') + Math.abs(v).toFixed(1) + 's';
+      }
+      function showingTrack() {
+        return Array.from(player.textTracks).find((t) => t.mode === 'showing') || null;
+      }
+      // ensureCues：track 切到 showing 后 cues 可能仍在异步加载，轮询等待最多约 3 秒
+      function ensureCues(track, cb) {
+        if (track.cues && track.cues.length) { cb(); return; }
+        let tries = 0;
+        const timer = setInterval(() => {
+          if ((track.cues && track.cues.length) || ++tries >= 10) {
+            clearInterval(timer);
+            cb();
+          }
+        }, 300);
+      }
+      function shiftTrack(track) {
+        if (!track) return;
+        const base = applied.get(track) || 0;
+        const delta = delay - base;
+        if (Math.abs(delta) < 0.0001) return;
+        ensureCues(track, () => {
+          if (!track.cues) return;
+          for (const cue of track.cues) {
+            cue.startTime += delta;
+            cue.endTime += delta;
+          }
+          applied.set(track, delay);
+        });
+      }
+      function applyAll() {
+        shiftTrack(showingTrack());
+      }
+
+      // ---- 延迟调节 UI（挂在字幕下拉菜单底部，字幕菜单每次重建后重新挂载）----
+      let panel = null;
+      function buildPanel() {
+        panel = document.createElement('div');
+        panel.className = 'sub-delay-row';
+        panel.setAttribute('data-sub-delay', '');
+        panel.innerHTML =
+          '<div class="sub-delay-head"><span>字幕偏移</span>' +
+          '<span class="sub-delay-val" data-sub-delay-val></span></div>' +
+          '<div class="sub-delay-btns">' +
+          '<button type="button" class="sub-delay-btn" data-sub-delay-minus title="字幕提前 0.5 秒">−0.5s</button>' +
+          '<button type="button" class="sub-delay-btn" data-sub-delay-reset title="恢复音画同步">重置</button>' +
+          '<button type="button" class="sub-delay-btn" data-sub-delay-plus title="字幕延后 0.5 秒">+0.5s</button>' +
+          '</div>';
+        const val = panel.querySelector('[data-sub-delay-val]');
+        const refresh = () => { val.textContent = formatDelay(delay); };
+        panel.querySelector('[data-sub-delay-minus]').addEventListener('click', (e) => {
+          e.stopPropagation();
+          change(delay - STEP);
+        });
+        panel.querySelector('[data-sub-delay-plus]').addEventListener('click', (e) => {
+          e.stopPropagation();
+          change(delay + STEP);
+        });
+        panel.querySelector('[data-sub-delay-reset]').addEventListener('click', (e) => {
+          e.stopPropagation();
+          change(0);
+        });
+        panel._refresh = refresh;
+        refresh();
+      }
+      function mount() {
+        if (!panel) buildPanel();
+        if (!panel.isConnected) dropdown.appendChild(panel);
+        if (panel._refresh) panel._refresh();
+      }
+      function change(v) {
+        delay = v;
+        window.PlayerPrefs.save({ subDelay: delay });
+        if (panel && panel._refresh) panel._refresh();
+        applyAll();
+      }
+
+      // textTracks 变化（转码注入内嵌轨）与切轨都会触发重放当前偏移
+      player.textTracks.addEventListener('change', applyAll);
+      // 重置播放偏好时偏移归零并平移回去
+      window.addEventListener('prefs-reset', () => change(0));
+
+      // 自检挂载：本脚本位于字幕菜单分支之后，菜单首次 buildMenu 时 SubDelay 尚未定义，
+      // 此处补挂一次；后续 buildMenu 的 mount() 靠 isConnected 守卫避免重复
+      mount();
+      applyAll(); // 处理 <track default> 已处于 showing 的首帧场景
+      return { mount, applyAll };
+    })();
+  </script>
 
   <!-- 时间点分享链接：解析 ?t= 秒数并在元数据就绪后跳转；按钮复制“当前播放位置”链接。
        本段必须先于下方 StoreOn 进度段执行，window.__urlSeek 供 resume() 做优先级守卫。 -->

@@ -1602,6 +1602,37 @@ a.smart-rule-card { color: inherit; text-decoration: none; justify-content: spac
 
 /* 字幕管理弹窗：菜单固定入口与上传/列表样式 */
 .sub-mgr-entry { border-top: 1px solid var(--border); border-radius: 0; margin-top: 2px; padding-top: 10px; }
+
+/* 字幕音画偏移：挂在字幕下拉菜单底部，纯前端平移 VTTCue 时间轴 */
+.sub-delay-row {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+.sub-delay-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 2px;
+  white-space: nowrap;
+}
+.sub-delay-val { color: var(--accent); font-variant-numeric: tabular-nums; }
+.sub-delay-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.sub-delay-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sub-delay-btn:hover { border-color: var(--accent); color: var(--accent); }
 .sub-mgr-empty { color: var(--muted); font-size: 13px; padding: 8px 2px; }
 .sub-mgr-row {
   display: flex;

@@ -405,3 +405,62 @@ func TestSubtitleManagerInjection(t *testing.T) {
 		}
 	}
 }
+
+// TestSubtitleDelayModuleInjection 字幕音画同步模块是独立共享脚本，
+// 无论是否存在外挂字幕都必须渲染，并暴露 mount/applyAll 供字幕菜单回调。
+func TestSubtitleDelayModuleInjection(t *testing.T) {
+	// 无字幕视频：走第三分支，共享延迟模块仍在（面板挂载由另两个字幕分支负责）
+	ts, _, vid := newSubtitleUploadServer(t)
+	_, html := getHTML(t, ts, "/watch/"+vid)
+	for _, want := range []string{
+		"window.SubDelay = (() => {",
+		"data-sub-delay-minus",
+		"data-sub-delay-plus",
+		"data-sub-delay-reset",
+		// 回归：本脚本在字幕菜单之后，必须自检挂载，否则菜单首次 buildMenu 时模块还未定义
+		"mount();\n      applyAll();",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("无字幕播放页缺少字幕延迟模块标记 %q", want)
+		}
+	}
+}
+
+// TestSubtitleDelayModuleWithExternalSubs 外挂字幕分支必须挂载延迟面板并在切轨时重放偏移。
+func TestSubtitleDelayModuleWithExternalSubs(t *testing.T) {
+	root := t.TempDir()
+	videoPath := filepath.Join(root, "movie.mkv")
+	if err := os.WriteFile(videoPath, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "movie.zh.srt"),
+		[]byte("1\n00:00:01,000 --> 00:00:02,000\n你好\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := media.NewLibrary(root, media.DefaultExts)
+	if _, err := lib.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	vid := lib.List()[0].ID
+	thumbs, _ := media.NewThumbnailer(t.TempDir(), "ffmpeg")
+	srv, err := New(lib, thumbs, nil, nil, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := newHTTPTestServer(t, srv.Handler())
+
+	_, html := getHTML(t, ts, "/watch/"+vid)
+	for _, want := range []string{
+		"window.SubDelay = (() => {",
+		"if (window.SubDelay) window.SubDelay.mount();",
+		"if (window.SubDelay) window.SubDelay.applyAll();",
+		// PlayerPrefs 对白名单字段 subDelay 的有限数值校验
+		"typeof obj.subDelay === 'number' && isFinite(obj.subDelay)",
+		// 偏移经 VTTCue 时间轴平移生效
+		"cue.startTime += delta",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("外挂字幕播放页缺少 %q", want)
+		}
+	}
+}
