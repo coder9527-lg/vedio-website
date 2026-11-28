@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 type basePage struct {
 	Title       string
 	AuthEnabled bool
+	CurrentUser *CurrentUser // 当前登录身份（匿名/未开启认证时为匿名访客），供模板按角色显隐入口
 }
 
 // 允许的排序白名单，防止把任意字符串透传到查询层。
@@ -167,7 +169,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		data.ContinueCards = s.buildContinueShelf()
 		data.RecentCards = s.buildRecentShelf()
 	}
-	s.render(w, "index.html", data)
+	s.renderWithUser(w, r, "index.html", &data)
 }
 
 // shelfSize 限制每个横向行的卡片数量。
@@ -546,6 +548,35 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("渲染模板 %s 失败: %v", name, err)
+	}
+}
+
+// renderWithUser 在普通渲染前，把当前登录身份写入 data 内嵌 basePage.CurrentUser，
+// 供需要按角色显隐入口的页面使用。data 必须是指向含 basePage 结构体的指针。
+func (s *Server) renderWithUser(w http.ResponseWriter, r *http.Request, name string, data any) {
+	injectCurrentUser(data, userFromContext(r))
+	s.render(w, name, data)
+}
+
+// injectCurrentUser 通过反射把当前用户写入 data 内嵌 basePage 的 CurrentUser 字段。
+func injectCurrentUser(data any, u *CurrentUser) {
+	v := reflect.ValueOf(data)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return
+	}
+	root := v.Elem()
+	if root.Kind() != reflect.Struct {
+		return
+	}
+	bp := root.FieldByName("basePage")
+	// 嵌入的结构体字段整体不可 Set（不能替换整个 basePage），但 CanAddr 即可寻址，
+	// 其内部字段 CurrentUser 仍可 Set，这里不能用 bp.CanSet() 判断。
+	if !bp.IsValid() || !bp.CanAddr() {
+		return
+	}
+	cu := bp.FieldByName("CurrentUser")
+	if cu.IsValid() && cu.IsNil() {
+		cu.Set(reflect.ValueOf(u))
 	}
 }
 

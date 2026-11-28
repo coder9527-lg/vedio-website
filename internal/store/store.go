@@ -178,6 +178,18 @@ CREATE TABLE IF NOT EXISTS ratings (
     updated_at TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ratings_stars ON ratings(stars DESC, updated_at DESC);
+-- 多用户 RBAC：用户与角色（admin/pm/viewer），密码存 bcrypt 哈希；token_version 支撑改密/改角色即时失效
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL UNIQUE,
+    display_name  TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'viewer',
+    token_version INTEGER NOT NULL DEFAULT 1,
+    created_at    TIMESTAMP NOT NULL,
+    updated_at    TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 `)
 	if err != nil {
 		return err

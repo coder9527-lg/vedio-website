@@ -50,6 +50,11 @@ type Config struct {
 	AuthSecret       string        // Cookie 签名密钥，留空时每次启动随机生成（重启后全员需重新登录）
 	AuthTTL          time.Duration // 登录态有效期
 	AuthCookieSecure bool          // Cookie 是否仅经 HTTPS 传输（反代 HTTPS 时建议开启）
+
+	// 首个管理员引导（可选）：仅在 DB 可用且 users 表为空、两者齐全时创建一个 admin 账号；
+	// 已存在任意用户则忽略。多用户模式启用后登录走用户名+密码，与 AuthPassword 解耦。
+	AdminUsername string
+	AdminPassword string
 }
 
 func getenv(key, fallback string) string {
@@ -96,6 +101,9 @@ func Load() *Config {
 		AuthSecret:       os.Getenv("AUTH_SECRET"),
 		AuthTTL:          parseDuration("AUTH_TTL", 30*24*time.Hour),
 		AuthCookieSecure: os.Getenv("AUTH_COOKIE_SECURE") == "true",
+
+		AdminUsername: os.Getenv("ADMIN_USERNAME"),
+		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
 	}
 
 	if cfg.AuthPassword != "" {

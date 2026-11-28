@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}} · 我的视频库</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body class="login-page">
+  <button type="button" class="theme-toggle-float" data-theme-toggle aria-label="切换主题">🌓</button>
+  <main class="login-card">
+    <h1>⛔ 无权访问</h1>
+    <p class="login-sub">当前账号没有访问该资源所需的权限，请联系管理员。</p>
+    <div class="login-form">
+      <a class="btn-secondary" href="/" style="display:block;text-align:center;text-decoration:none;">返回首页</a>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" style="margin-top:0.75rem;">
+        <button type="submit" style="width:100%;">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </main>
+</body>
+</html>

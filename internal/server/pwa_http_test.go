@@ -34,7 +34,7 @@ func TestServiceWorkerRootRoute(t *testing.T) {
 	html := string(body)
 	for _, want := range []string{
 		// 缓存版本化与生命周期
-		`vw-cache-v10`,
+		`vw-cache-v11`,
 		`caches.open`,
 		`skipWaiting`,
 		`clients.claim`,

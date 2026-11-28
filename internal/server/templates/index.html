@@ -48,10 +48,15 @@
       <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
       <a class="btn-secondary" href="/smart">智能清单</a>
       <span class="count">共 {{.Total}} 个视频</span>
-      {{if .ScrapeOn}}
+      {{if and .ScrapeOn (.CurrentUser.Can "metadata.edit")}}
       <button id="bulk-scrape-btn" type="button" class="btn-secondary">批量刮削</button>
       {{end}}
+      {{if .CurrentUser.Can "library.scan"}}
       <button id="rescan-btn" type="button">重新扫描</button>
+      {{end}}
+      {{if and .AuthEnabled .CurrentUser.MultiUser}}
+      <span class="count" title="当前登录身份">👤 {{if .CurrentUser.DisplayName}}{{.CurrentUser.DisplayName}}{{else}}{{.CurrentUser.Username}}{{end}}（{{.CurrentUser.Role}}）</span>
+      {{end}}
       {{if .AuthEnabled}}
       <form method="post" action="/logout" class="inline-form">
         <button type="submit" class="btn-secondary">退出登录</button>
@@ -112,9 +117,13 @@
         <button type="button" class="tab nav-more-btn" id="nav-more-btn"
                 aria-haspopup="true" aria-expanded="false">更多 <span class="caret">▾</span></button>
         <div class="nav-dropdown" id="nav-dropdown" role="menu">
+          {{if .CurrentUser.Can "system.health"}}
           <a class="nav-dropdown-item" role="menuitem" href="/library/storage">🗂️ 片库存储分析</a>
           <a class="nav-dropdown-item" role="menuitem" href="/cache/health">🧹 缓存健康检查</a>
+          {{end}}
+          {{if .CurrentUser.Can "transcode.admin"}}
           <a class="nav-dropdown-item" role="menuitem" href="/transcode/admin">🎛️ 转码任务</a>
+          {{end}}
           <a class="nav-dropdown-item" role="menuitem" href="/browse">📁 目录浏览</a>
           <!-- 随便看看：纯后端随机，不依赖 SQLite，常驻显示 -->
           <a class="nav-dropdown-item" role="menuitem" href="/random">🎲 随便看看</a>
@@ -128,8 +137,15 @@
           <a class="nav-dropdown-item" role="menuitem" href="/my-ratings">⭐ 我的高分</a>
           <a class="nav-dropdown-item" role="menuitem" href="/watch-later">🕓 稍后再看</a>
           <a class="nav-dropdown-item" role="menuitem" href="/bookmarks">🔖 全部书签</a>
+          {{if .CurrentUser.Can "share.manage"}}
           <a class="nav-dropdown-item" role="menuitem" href="/shares">🔗 分享管理</a>
+          {{end}}
+          {{if .CurrentUser.Can "system.health"}}
           <a class="nav-dropdown-item" role="menuitem" href="/data/health">🩺 数据健康检查</a>
+          {{end}}
+          {{if .CurrentUser.IsAdmin}}
+          <a class="nav-dropdown-item" role="menuitem" href="/admin/users">👥 用户与角色</a>
+          {{end}}
           {{end}}
         </div>
       </div>

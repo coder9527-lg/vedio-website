@@ -166,11 +166,32 @@ func main() {
 		log.Printf("过期分享定时清理已开启，间隔 %s", cfg.ShareCleanupInterval)
 	}
 
+	// 认证器：访问密码或管理员引导任一配置即启用。
+	// 单密码模式下 AUTH_PASSWORD 即登录口令；多用户模式（users 表有账号）下它不再作为登录入口，
+	// 仅复用其 HMAC 密钥/TTL 签发与校验用户身份令牌，故未显式配置时用占位口令兜底构造认证器。
 	var authenticator *auth.Authenticator
-	if cfg.AuthPassword != "" {
-		authenticator, err = auth.New(cfg.AuthPassword, cfg.AuthSecret, cfg.AuthTTL)
+	authPassword := cfg.AuthPassword
+	if authPassword == "" && db != nil && cfg.AdminUsername != "" && cfg.AdminPassword != "" {
+		authPassword = "bootstrap-disabled-single-password"
+	}
+	if authPassword != "" {
+		authenticator, err = auth.New(authPassword, cfg.AuthSecret, cfg.AuthTTL)
 		if err != nil {
 			log.Fatalf("初始化认证失败: %v", err)
+		}
+	}
+
+	// 首个管理员引导：仅在 DB 可用、users 表为空、ADMIN_USERNAME/PASSWORD 齐全时创建。
+	// 已存在任意用户（含历史引导）一律忽略，不覆盖、不改密。
+	if db != nil && cfg.AdminUsername != "" && cfg.AdminPassword != "" {
+		if n, err := db.CountUsers(); err != nil {
+			log.Printf("警告: 查询用户数失败，跳过管理员引导: %v", err)
+		} else if n == 0 {
+			if _, err := db.CreateUser(cfg.AdminUsername, "管理员", cfg.AdminPassword, store.RoleAdmin); err != nil {
+				log.Printf("警告: 引导首个管理员失败: %v", err)
+			} else {
+				log.Printf("已引导首个管理员账号: %s（多用户模式启用，登录请使用用户名+密码）", cfg.AdminUsername)
+			}
 		}
 	}
 

@@ -3,7 +3,7 @@
  * 策略：导航 network-first（失败回退缓存/离线页）；静态资源 stale-while-revalidate；
  * 媒体流与鉴权内容一律不缓存。缓存名版本化，activate 时清理旧版本。
  */
-const CACHE_NAME = 'vw-cache-v10';
+const CACHE_NAME = 'vw-cache-v11';
 
 // 安装期预缓存：应用骨架资源（不含任何视频/图片等大文件）
 const PRECACHE_URLS = [

@@ -32,12 +32,19 @@
   <button type="button" class="theme-toggle-float" data-theme-toggle aria-label="切换主题">🌓</button>
   <main class="login-card">
     <h1>🔒 访问验证</h1>
-    <p class="login-sub">请输入访问密码以继续</p>
+    <p class="login-sub">{{if .MultiUser}}请输入账号与密码以继续{{else}}请输入访问密码以继续{{end}}</p>
     {{if .Error}}<p class="login-error" role="alert">{{.Error}}</p>{{end}}
     <form method="post" action="/login" class="login-form">
       <input type="hidden" name="next" value="{{.Next}}">
+      {{if .MultiUser}}
+      <input type="text" name="username" autocomplete="username"
+             placeholder="用户名" value="{{.Username}}" required autofocus>
+      <input type="password" name="password" autocomplete="current-password"
+             placeholder="密码" required>
+      {{else}}
       <input type="password" name="password" autocomplete="current-password"
              placeholder="访问密码" required autofocus>
+      {{end}}
       <button type="submit">登 录</button>
     </form>
   </main>
