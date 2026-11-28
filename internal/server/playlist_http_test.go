@@ -298,6 +298,15 @@ func TestPlaylistShowAddDedupesInOrder(t *testing.T) {
 		t.Fatalf("重复整剧加入应全跳过: %d %v", status, body)
 	}
 
+	// 回归：带持久化的剧集页会渲染内联脚本，showID 不得被 printf 二次转义混入字面引号
+	page := get(t, ts, "/shows/"+show.ID)
+	pageHTML := readAll(t, page)
+	page.Body.Close()
+	if !strings.Contains(pageHTML, `const showID = "`+show.ID+`"`) ||
+		strings.Contains(pageHTML, `const showID = "\"`) {
+		t.Error("剧集页 showID 渲染异常，存在 printf 百分号q 二次转义")
+	}
+
 	// 不存在的剧集 → 404
 	status, _ = doJSON(t, ts, http.MethodPost, "/api/v1/shows/ghost/playlist",
 		map[string]string{"playlistId": pid})

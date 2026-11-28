@@ -45,3 +45,31 @@ func TestWatchPagePlayerPrefsDefinedEarly(t *testing.T) {
 		t.Error("PlayerPrefs 必须在首个 getSubLabel 调用之前定义")
 	}
 }
+
+// TestWatchPageRemembersQualityAndAudio 锁定「记忆清晰度档位与音轨」的渲染契约：
+// 偏好白名单新增 quality/audioIndex，选择时写存储，初始化与 HLS 挂载后恢复记忆值，
+// 重置偏好复用既有 reset（清空整个 vw:prefs）。仅在 ffmpeg 可用、转码脚本块渲染时覆盖。
+func TestWatchPageRemembersQualityAndAudio(t *testing.T) {
+	if !ffmpegInPath() {
+		t.Skip("环境无 ffmpeg，跳过转码脚本块的清晰度/音轨记忆契约测试")
+	}
+	ts, vid := newTranscodeHTTPServer(t)
+	code, html := getHTML(t, ts, "/watch/"+vid)
+	if code != http.StatusOK {
+		t.Fatalf("播放页状态码 = %d", code)
+	}
+	containsAll(t, html,
+		// 偏好字段白名单与字段级校验
+		`QUALITY_PREFS = ['direct', 'auto', '1080p', '720p', '480p']`,
+		`prefs.quality = obj.quality`,
+		`prefs.audioIndex = obj.audioIndex`,
+		// 选择清晰度时持久化
+		`window.PlayerPrefs.save({ quality: q })`,
+		// 初始化沿用记忆档位
+		`const rememberedQuality = window.PlayerPrefs.get('quality')`,
+		// 音轨选择持久化与挂载后恢复
+		`window.PlayerPrefs.save({ audioIndex: index })`,
+		`function applyRememberedAudio()`,
+		`applyRememberedAudio()`,
+	)
+}

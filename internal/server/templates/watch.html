@@ -26,6 +26,7 @@
       const CUES = ['cue-sm', 'cue-md', 'cue-lg'];  // 与字号菜单 class 白名单一致
       const FITS = ['contain', 'cover', 'fill'];    // 与画面缩放菜单 data-fit 白名单一致
       const ROTS = [0, 90, 180, 270];                // 与画面旋转菜单 data-rot 白名单一致
+      const QUALITY_PREFS = ['direct', 'auto', '1080p', '720p', '480p']; // 与清晰度菜单 data-quality 白名单一致
       // 隐私模式等场景 localStorage 写入可能抛错，此时降级为仅内存态，不影响播放
       let mem = {};
       let cache = null; // 只 parse 一次；null 表示尚未加载
@@ -61,6 +62,10 @@
           if (typeof obj.cue === 'string' && CUES.includes(obj.cue)) prefs.cue = obj.cue;
           if (typeof obj.videoFit === 'string' && FITS.includes(obj.videoFit)) prefs.videoFit = obj.videoFit;
           if (typeof obj.videoRot === 'number' && ROTS.includes(obj.videoRot)) prefs.videoRot = obj.videoRot;
+          // 记忆清晰度档位：仅接受菜单白名单内的字符串，跨片沿用
+          if (typeof obj.quality === 'string' && QUALITY_PREFS.includes(obj.quality)) prefs.quality = obj.quality;
+          // 记忆音轨序号：非负整数；具体视频音轨数不足时由调用方降级到默认轨
+          if (Number.isInteger(obj.audioIndex) && obj.audioIndex >= 0) prefs.audioIndex = obj.audioIndex;
           // 字幕音画偏移（秒）：负值提前、正值延后；仅接受有限数值，0 为默认无偏移
           if (typeof obj.subDelay === 'number' && isFinite(obj.subDelay)) prefs.subDelay = obj.subDelay;
           // subLabel 允许 null（用户明确关闭字幕）；undefined 表示从未设置，调用方需区分
@@ -523,6 +528,8 @@
       function selectQuality(q) {
         if (q === quality) return;
         if (q !== 'direct' && q !== AUTO && !QUALITIES.includes(q)) return;
+        // 记忆用户选择的清晰度档位，下次打开任意视频自动沿用（重置偏好可清除）
+        window.PlayerPrefs.save({ quality: q });
         if (q === 'direct') {
           useDirect();
           return;
@@ -633,6 +640,7 @@
           setStatus('转码播放中');
           if (resumePos > 1) player.currentTime = resumePos;
           if (wasPlaying) player.play().catch(() => {});
+          applyRememberedAudio();
         };
 
         if (window.Hls && Hls.isSupported()) {
@@ -683,20 +691,42 @@
       const audioBtn = document.getElementById('audio-menu-btn');
 
       function hideAudioMenu() { if (audioWrap) audioWrap.hidden = true; }
+      // applyRememberedAudio 在 HLS 挂载、音轨就绪后恢复记忆音轨；
+      // 记忆序号超出当前视频音轨数（跨片差异）时静默降级，不改动存储里的偏好。
+      function applyRememberedAudio() {
+        const idx = window.PlayerPrefs.get('audioIndex');
+        if (!Number.isInteger(idx) || idx < 0) return;
+        const trackCount = (hls && hls.audioTracks && hls.audioTracks.length)
+          ? hls.audioTracks.length
+          : (player.audioTracks ? player.audioTracks.length : 0);
+        if (!trackCount || idx >= trackCount) return;
+        const btn = audioDropdown.children[idx];
+        selectAudio(idx, btn || null, true);
+      }
       function renderAudioMenu(tracks) {
         if (!audioWrap || tracks.length < 2) { hideAudioMenu(); return; }
         audioWrap.hidden = false;
         audioDropdown.innerHTML = '';
+        const remembered = window.PlayerPrefs.get('audioIndex');
+        let activeBtn = null;
         tracks.forEach((t, i) => {
           const item = document.createElement('button');
           item.type = 'button';
-          item.className = 'track-item' + (t.default ? ' current' : '');
+          item.className = 'track-item';
           item.textContent = (i + 1) + '. ' + (t.label || ('音轨 ' + (i + 1)));
           item.addEventListener('click', () => selectAudio(i, item));
           audioDropdown.appendChild(item);
+          // 记忆的音轨序号命中本轨则选中，否则沿用后端 default 标记
+          if (remembered === i || (remembered === undefined && t.default)) activeBtn = item;
         });
+        if (activeBtn) {
+          activeBtn.classList.add('current');
+          // 菜单构建后立即恢复记忆音轨（此时 HLS 可能尚未挂载，挂载后还会在 attachHls 再应用一次）
+          const idx = Array.prototype.indexOf.call(audioDropdown.children, activeBtn);
+          selectAudio(idx, activeBtn, true);
+        }
       }
-      function selectAudio(index, btn) {
+      function selectAudio(index, btn, silent) {
         // hls.js 路径：切换音频变体；Safari 原生 HLS：走 audioTracks
         if (hls && hls.audioTracks && hls.audioTracks.length) {
           hls.audioTrack = index;
@@ -707,6 +737,8 @@
         }
         audioDropdown.querySelectorAll('.track-item').forEach(el => el.classList.remove('current'));
         if (btn) btn.classList.add('current');
+        // silent 用于挂载前的预恢复（实例尚未就绪），只更新菜单高亮，不写存储，避免把降级值回写
+        if (!silent) window.PlayerPrefs.save({ audioIndex: index });
       }
       if (audioBtn) {
         audioBtn.addEventListener('click', (e) => {
@@ -739,9 +771,13 @@
         }
       });
 
-      // 非浏览器友好格式（MKV/FLV/AVI 等）默认走 720p 单档转码播放；
-      // 自适应 ABR 编码开销约为单档多倍，不自动启用，由用户在菜单显式选择。
-      if (!nativePlayable) {
+      // 初始档位：优先沿用记忆的清晰度偏好；无偏好时维持原逻辑——
+      // 非浏览器友好格式（MKV/FLV/AVI 等）默认走 720p 单档转码，友好格式用原画直链。
+      // 自适应 ABR 编码开销约为单档多倍，仅在用户曾显式选择时才自动启用。
+      const rememberedQuality = window.PlayerPrefs.get('quality');
+      if (rememberedQuality && rememberedQuality !== 'direct') {
+        selectQuality(rememberedQuality);
+      } else if (!nativePlayable) {
         selectQuality('720p');
       }
     })();
@@ -2711,7 +2747,8 @@
         window.PlayerPrefs.save({ volume: v, muted: player.muted });
       });
 
-      // ---- 重置偏好：清存储并立即恢复四项默认，不 reload、不打断播放 ----
+      // ---- 重置偏好：清存储并立即恢复各项默认，不 reload、不打断播放 ----
+      // PlayerPrefs.reset 已清空清晰度档位与音轨序号；下次切换/重开页面即回默认（原画/默认轨）。
       const prefToast = document.getElementById('pref-toast');
       function showPrefToast(msg) {
         prefToast.textContent = msg;

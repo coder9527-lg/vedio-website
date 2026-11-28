@@ -132,6 +132,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /smart/{rule}", s.handleSmartPlaylistDetail)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("GET /watch-later", s.handleWatchLaterPage)
+	// 续播提醒：聚合所有看到一半的视频，按最近观看排序，展示剩余时长并一键续播（依赖 SQLite）
+	mux.HandleFunc("GET /continue", s.handleContinuePage)
 	mux.HandleFunc("GET /random", s.handleRandom)
 	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
 	mux.HandleFunc("GET /review", s.handleReview)
@@ -208,6 +210,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/playlists/{id}/items/{videoId}/move", s.handlePlaylistMoveItem)
 	mux.HandleFunc("POST /api/v1/shows/{id}/playlist", s.handleShowAddToPlaylist)
 	mux.HandleFunc("GET /api/v1/videos/{id}/playlists", s.handleVideoPlaylists)
+	// 合集（播放列表）独立 SSR 详情页，与 /api/v1 前缀的 JSON 接口区分
+	mux.HandleFunc("GET /playlists/{id}", s.handlePlaylistPage)
 	// 播放列表备份迁移：导出为 JSON 文件、从 JSON 新建导入（仅在启用持久化时可用，否则 503）
 	mux.HandleFunc("GET /api/v1/export/playlists.json", s.handleExportPlaylists)
 	mux.HandleFunc("POST /api/v1/import/playlists", s.handleImportPlaylists)
@@ -233,6 +237,11 @@ func (s *Server) Handler() http.Handler {
 	// ServeMux 通配段不允许与字面段（subs）同级共存，故用 {rest...} 收敛后在 handler 内分发。
 	mux.HandleFunc("GET /api/v1/videos/{id}/transcode", s.handleTranscodeStatus)
 	mux.HandleFunc("GET /hls/{id}/{rest...}", s.handleHLS)
+
+	// 转码任务管理（可选）：管理页、会话快照轮询、终止并清理单个会话
+	mux.HandleFunc("GET /transcode/admin", s.handleTranscodeAdminPage)
+	mux.HandleFunc("GET /api/v1/transcode/sessions", s.handleTranscodeAdminList)
+	mux.HandleFunc("POST /api/v1/transcode/sessions/{id}/stop", s.handleTranscodeAdminStop)
 
 	// 外挂字幕：列表与 WebVTT 轨道（原画/HLS 两种模式通用）
 	mux.HandleFunc("GET /api/v1/videos/{id}/subtitles", s.handleSubtitleList)

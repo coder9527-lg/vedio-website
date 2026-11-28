@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="stats-heading">🎛️ 转码任务</h2>
+
+    {{if not .Enabled}}
+    <div class="empty">
+      <p>转码功能未启用。</p>
+      <p class="hint">设置 TRANSCODE_ENABLED=true 并确保镜像内可找到 ffmpeg 后，播放不支持原画直出的视频时会自动建立转码会话，本页即可管理。</p>
+    </div>
+    {{else}}
+    <p class="hint">
+      实时展示 HLS 在线转码会话。并发槽位上限 {{.MaxConcurrent}}；
+      硬件加速：{{if .HWAccel}}{{.HWAccel}}{{else}}CPU 软转{{end}}。
+      空闲会话由系统按超时自动回收，也可在此手动终止并清理其产物。
+    </p>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <p class="stat-label">活动会话</p>
+        <p class="stat-value" data-tc-stat-active>–</p>
+        <p class="stat-sub">starting / running 占用槽位</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">会话总数</p>
+        <p class="stat-value" data-tc-stat-total>–</p>
+        <p class="stat-sub">含已完成、空闲与失败</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">转码产物占用</p>
+        <p class="stat-value" data-tc-stat-bytes>–</p>
+        <p class="stat-sub">HLS 分片与播放列表</p>
+      </div>
+    </div>
+
+    <section class="dist-section" aria-label="转码会话列表">
+      <h2 class="shelf-title">会话列表</h2>
+      <div data-tc-loading class="hint">正在加载会话…</div>
+      <div data-tc-empty class="empty" hidden>
+        <p>当前没有任何转码会话。</p>
+        <p class="hint">播放触发转码后，会话会出现在这里。</p>
+      </div>
+      <div class="tc-list" data-tc-list hidden data-tc-rows></div>
+      <p class="hint" data-tc-error role="alert" hidden></p>
+    </section>
+
+    <script>
+      (function () {
+        var POLL_MS = 3000;
+        var stateLabels = {
+          idle: '空闲', starting: '排队中', running: '转码中',
+          done: '已完成', failed: '失败'
+        };
+
+        function humanSize(bytes) {
+          if (!bytes || bytes <= 0) return '0 B';
+          var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+          var i = Math.floor(Math.log(bytes) / Math.log(1024));
+          var v = bytes / Math.pow(1024, i);
+          return (v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + units[i];
+        }
+
+        function fmtTime(iso) {
+          if (!iso) return '–';
+          var d = new Date(iso);
+          if (isNaN(d.getTime())) return '–';
+          function pad(n) { return n < 10 ? '0' + n : '' + n; }
+          return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+                 pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+        }
+
+        function esc(s) {
+          return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+          });
+        }
+
+        var els = {
+          loading: document.querySelector('[data-tc-loading]'),
+          empty: document.querySelector('[data-tc-empty]'),
+          list: document.querySelector('[data-tc-list]'),
+          err: document.querySelector('[data-tc-error]'),
+          active: document.querySelector('[data-tc-stat-active]'),
+          total: document.querySelector('[data-tc-stat-total]'),
+          bytes: document.querySelector('[data-tc-stat-bytes]')
+        };
+        var rowsEl = els.list;
+
+        function showError(msg) {
+          els.err.textContent = '加载失败：' + msg;
+          els.err.hidden = false;
+        }
+
+        function render(summary) {
+          els.err.hidden = true;
+          els.loading.hidden = true;
+          var sessions = summary.sessions || [];
+          els.active.textContent = String(sessions.filter(function (s) {
+            return s.state === 'starting' || s.state === 'running';
+          }).length);
+          els.total.textContent = String(sessions.length);
+          els.bytes.textContent = humanSize(summary.totalBytes);
+
+          if (!sessions.length) {
+            els.list.hidden = true;
+            els.empty.hidden = false;
+            rowsEl.innerHTML = '';
+            return;
+          }
+          els.empty.hidden = true;
+          els.list.hidden = false;
+
+          rowsEl.innerHTML = sessions.map(function (s) {
+            var label = stateLabels[s.state] || s.state;
+            // 任意状态（含 done/failed）的会话都允许手动终止并清理产物，
+            // 与后端 StopSession 不区分状态的能力保持一致。
+            var btnLabel = (s.state === 'starting' || s.state === 'running') ? '终止并清理' : '清理产物';
+            return '<div class="tc-row">' +
+              '<div class="tc-row-main">' +
+                '<a class="tc-row-name" href="/watch/' + encodeURIComponent(s.videoId) + '" title="' + esc(s.videoName) + '">' + esc(s.videoName) + '</a>' +
+                '<div class="tc-row-meta">' +
+                  '<span class="tc-state tc-state-' + esc(s.state) + '">' + label + '</span>' +
+                  '<span class="tc-chip">' + esc(s.quality) + (s.multiAudio ? ' · 多音轨' : '') + '</span>' +
+                  '<span class="tc-chip">' + s.segments + ' 分片</span>' +
+                  '<span class="tc-chip">' + humanSize(s.bytes) + '</span>' +
+                  '<span class="tc-chip tc-access">访问 ' + fmtTime(s.lastAccess) + '</span>' +
+                '</div>' +
+              '</div>' +
+              '<button type="button" class="btn-secondary btn-danger tc-stop-btn" ' +
+                'data-id="' + esc(s.videoId) + '" data-q="' + esc(s.quality) + '" ' +
+                'data-name="' + esc(s.videoName) + '" data-quality="' + esc(s.quality) + '">' + btnLabel + '</button>' +
+            '</div>';
+          }).join('');
+        }
+
+        function poll() {
+          fetch('/api/v1/transcode/sessions', { headers: { 'Accept': 'application/json' } })
+            .then(function (resp) {
+              return resp.json().then(function (data) {
+                if (!resp.ok) throw new Error(data.error || ('请求失败 (' + resp.status + ')'));
+                return data;
+              });
+            })
+            .then(render)
+            .catch(function (err) { showError(err.message); });
+        }
+
+        rowsEl.addEventListener('click', function (e) {
+          var btn = e.target.closest('.tc-stop-btn');
+          if (!btn) return;
+          var msg = '确定终止「' + btn.dataset.name + '」的 ' + btn.dataset.quality +
+                    ' 转码会话并删除其已产出的分片吗？下次播放会重新转码。';
+          if (!window.confirm(msg)) return;
+          btn.disabled = true;
+          var url = '/api/v1/transcode/sessions/' + encodeURIComponent(btn.dataset.id) +
+                    '/stop?q=' + encodeURIComponent(btn.dataset.q);
+          fetch(url, { method: 'POST' })
+            .then(function (resp) {
+              return resp.json().then(function (data) {
+                if (!resp.ok) throw new Error(data.error || ('请求失败 (' + resp.status + ')'));
+                return data;
+              });
+            })
+            .then(function () { poll(); })
+            .catch(function (err) {
+              window.alert('终止失败：' + err.message);
+              btn.disabled = false;
+            });
+        });
+
+        poll();
+        setInterval(poll, POLL_MS);
+      })();
+    </script>
+    {{end}}
+  </main>
+</body>
+</html>

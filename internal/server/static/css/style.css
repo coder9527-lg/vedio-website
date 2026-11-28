@@ -2153,3 +2153,179 @@ a.share-mgr-name:hover { color: var(--accent); }
   white-space: nowrap;
 }
 .dh-section .dh-clean-btn { margin-top: 10px; }
+
+/* 转码任务管理页：会话行、状态徽标与信息芯片 */
+.tc-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.tc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+.tc-row-main { min-width: 0; flex: 1; }
+.tc-row-name {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tc-row-name:hover { color: var(--accent); }
+.tc-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.tc-chip {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+.tc-access { font-variant-numeric: tabular-nums; }
+.tc-state {
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+.tc-state-idle    { color: var(--muted); background: var(--surface-raised); border: 1px solid var(--border); }
+.tc-state-starting{ color: var(--accent); background: rgba(56, 189, 248, .12); border: 1px solid rgba(56, 189, 248, .4); }
+.tc-state-running { color: var(--accent); background: rgba(56, 189, 248, .18); border: 1px solid rgba(56, 189, 248, .5); }
+.tc-state-done    { color: #34d399; background: rgba(52, 211, 153, .12); border: 1px solid rgba(52, 211, 153, .4); }
+.tc-state-failed  { color: var(--danger); background: var(--danger-bg); border: 1px solid var(--danger-border); }
+.tc-row .tc-stop-btn { flex-shrink: 0; }
+@media (max-width: 600px) {
+  .tc-row { flex-direction: column; align-items: stretch; }
+  .tc-row .tc-stop-btn { width: 100%; }
+}
+
+/* 合集（播放列表）详情页：成员行、缩略图与排序操作 */
+.col-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.col-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+.col-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+  text-decoration: none;
+  color: var(--text);
+}
+.col-index {
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.col-thumb {
+  flex-shrink: 0;
+  width: 64px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+.col-row-body { min-width: 0; flex: 1; }
+.col-row-name {
+  display: block;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.col-row-main:hover .col-row-name { color: var(--accent); }
+.col-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.col-progress { font-size: 12px; color: var(--accent); }
+.col-row-ops { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.col-row-ops button { padding: 4px 10px; }
+.col-row-ops button:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 600px) {
+  .col-row { flex-direction: column; align-items: stretch; }
+  .col-row-ops { justify-content: flex-end; }
+}
+
+/* 首页继续观看行的「查看全部」入口，弱化样式跟随标题行 */
+.shelf-more-link {
+  margin-left: 10px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--accent);
+  text-decoration: none;
+}
+.shelf-more-link:hover { text-decoration: underline; }
+
+/* 续播提醒页：列表行、缩略图、剩余时长与清除操作 */
+.ct-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.ct-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+.ct-row-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  flex: 1;
+  text-decoration: none;
+  color: var(--text);
+}
+.ct-thumb-wrap { position: relative; flex-shrink: 0; width: 112px; }
+.ct-thumb {
+  width: 112px;
+  height: 63px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  display: block;
+}
+.ct-thumb-wrap .progress-bar {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 5px;
+}
+.ct-row-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.ct-row-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ct-row-main:hover .ct-row-name { color: var(--accent); }
+.ct-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.ct-remain { color: var(--accent); font-variant-numeric: tabular-nums; }
+.ct-remain-unknown { color: var(--muted); }
+.ct-row-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); }
+.ct-last-seen { font-variant-numeric: tabular-nums; }
+.ct-play-cta { color: var(--accent); font-weight: 600; }
+.ct-row-ops { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ct-row-ops button { padding: 4px 10px; }
+@media (max-width: 600px) {
+  .ct-row { flex-direction: column; align-items: stretch; }
+  .ct-row-ops { justify-content: flex-end; }
+  .ct-thumb-wrap, .ct-thumb { width: 96px; }
+  .ct-thumb { height: 54px; }
+}

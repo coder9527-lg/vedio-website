@@ -113,7 +113,8 @@
       const modal = document.getElementById('pl-add-modal');
       const pickList = document.getElementById('pl-pick-list');
       const newName = document.getElementById('pl-new-name');
-      const showID = {{printf "%q" .Show.ID}};
+      // 直接插值，由 html/template 在 JS 上下文安全转义；切勿再用 printf %q，否则引号被二次转义混入 ID
+      const showID = "{{.Show.ID}}";
       // target: {kind:'show'} 整剧，或 {kind:'video', videoId} 单集
       let target = null;
 

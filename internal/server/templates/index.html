@@ -101,7 +101,7 @@
       <a href="{{indexURL .Params "view" "all" "genre" ""}}" class="tab {{if eq .View "all"}}active{{end}}">全部</a>
       <a href="{{indexURL .Params "view" "continue" "genre" ""}}" class="tab {{if eq .View "continue"}}active{{end}}">继续观看</a>
       <a href="{{indexURL .Params "view" "favorites" "genre" ""}}" class="tab {{if eq .View "favorites"}}active{{end}}">⭐ 收藏</a>
-      <a href="/?view=playlists" class="tab {{if eq .View "playlists"}}active{{end}}">📂 播放列表</a>
+      <a href="/?view=playlists" class="tab {{if eq .View "playlists"}}active{{end}}">📂 合集</a>
     </nav>
     {{end}}
 
@@ -114,6 +114,7 @@
         <div class="nav-dropdown" id="nav-dropdown" role="menu">
           <a class="nav-dropdown-item" role="menuitem" href="/library/storage">🗂️ 片库存储分析</a>
           <a class="nav-dropdown-item" role="menuitem" href="/cache/health">🧹 缓存健康检查</a>
+          <a class="nav-dropdown-item" role="menuitem" href="/transcode/admin">🎛️ 转码任务</a>
           <a class="nav-dropdown-item" role="menuitem" href="/browse">📁 目录浏览</a>
           <!-- 随便看看：纯后端随机，不依赖 SQLite，常驻显示 -->
           <a class="nav-dropdown-item" role="menuitem" href="/random">🎲 随便看看</a>
@@ -121,6 +122,7 @@
           <a class="nav-dropdown-item" role="menuitem" href="/stats">📊 观影统计</a>
           <a class="nav-dropdown-item" role="menuitem" href="/review">🎬 年度回顾</a>
           <a class="nav-dropdown-item" role="menuitem" href="/history">🕘 观看历史</a>
+          <a class="nav-dropdown-item" role="menuitem" href="/continue">⏯️ 续播提醒</a>
           <a class="nav-dropdown-item" role="menuitem" href="/watch-later">🕓 稍后再看</a>
           <a class="nav-dropdown-item" role="menuitem" href="/bookmarks">🔖 全部书签</a>
           <a class="nav-dropdown-item" role="menuitem" href="/shares">🔗 分享管理</a>
@@ -161,7 +163,7 @@
     {{if and .StoreOn (eq .View "playlists")}}
     <section class="pl-panel">
       <div class="pl-panel-head">
-        <h2 class="pl-panel-title">我的播放列表</h2>
+        <h2 class="pl-panel-title">我的合集</h2>
         <div class="pl-head-actions">
           <a class="btn-secondary pl-io-btn" href="/smart">智能清单</a>
           <a class="btn-secondary pl-io-btn" href="/api/v1/export/playlists.json" download>⬇ 导出</a>
@@ -180,6 +182,7 @@
           </div>
           <div class="pl-card-actions">
             <button type="button" class="btn-secondary pl-play-all" data-pid="{{.ID}}">▶ 播放全部</button>
+            <a class="btn-secondary pl-detail-link" href="/playlists/{{.ID}}">合集详情</a>
             <button type="button" class="btn-secondary pl-manage-btn" data-pid="{{.ID}}">管理</button>
           </div>
         </div>
@@ -196,7 +199,7 @@
 
     {{if .ContinueCards}}
     <section class="shelf" aria-label="继续观看">
-      <h2 class="shelf-title">继续观看</h2>
+      <h2 class="shelf-title">继续观看 <a class="shelf-more-link" href="/continue">查看全部 ⏯️</a></h2>
       <div class="shelf-row">
         {{range .ContinueCards}}
         {{$v := .Video}}

@@ -41,7 +41,7 @@ func TestIndexMoreMenu(t *testing.T) {
 		// 常用视图入口保留在同级 tab（URL 由 indexURL 模板函数生成，按文案断言）
 		`>继续观看<`,
 		`>⭐ 收藏<`,
-		`>📂 播放列表<`,
+		`>📂 合集<`,
 	)
 }
 

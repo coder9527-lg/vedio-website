@@ -102,6 +102,13 @@ func TestShowAPIListAndGet(t *testing.T) {
 	if !strings.Contains(html, "S01E01") || !strings.Contains(html, "/watch/") {
 		t.Fatal("剧集页缺少集列表内容")
 	}
+	// 回归：内联 JS 的 showID 不得被 printf 二次转义混入字面引号。
+	// 该脚本块仅在持久化开启（StoreOn）时渲染，无 store 的本测试服务里整段缺失，需先判存在。
+	if strings.Contains(html, "const showID") {
+		if strings.Contains(html, `const showID = "\"`) || !strings.Contains(html, `const showID = "`+showID+`"`) {
+			t.Error("showID 渲染异常，存在 printf 百分号q 二次转义")
+		}
+	}
 
 	// 未知 ID 页面 → 404
 	notFound := get(t, ts, "/shows/nonexistent")
