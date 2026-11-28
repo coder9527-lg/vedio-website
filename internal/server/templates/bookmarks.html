@@ -95,7 +95,7 @@
     </div>
 
     <p class="hint" data-bookmarks-summary>
-      共 {{len .Groups}} 个视频、{{.TotalMarks}} 条书签；点击时间跳转到播放页对应位置，可直接在本页编辑备注或删除。
+      共 <span data-bm-summary-videos>{{len .Groups}}</span> 个视频、<span data-bm-summary-marks>{{.TotalMarks}}</span> 条书签；点击时间跳转到播放页对应位置，可直接在本页编辑备注或删除。
     </p>
     {{if gt .OrphanMarks 0}}
     <p class="hint bm-orphan-hint" data-bookmarks-orphan>已跳过 {{.OrphanMarks}} 条所属视频已移除的悬空书签。</p>

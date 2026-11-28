@@ -287,10 +287,14 @@
     var marksEl = document.querySelector('[data-bm-stat-marks]');
     var videosEl = document.querySelector('[data-bm-stat-videos]');
     var latestEl = document.querySelector('[data-bm-stat-latest]');
+    var summaryMarksEl = document.querySelector('[data-bm-summary-marks]');
+    var summaryVideosEl = document.querySelector('[data-bm-summary-videos]');
+    var videoCount = new Set(records.map(function (r) { return r.videoId; })).size;
     if (marksEl) marksEl.textContent = String(records.length);
-    if (videosEl) {
-      videosEl.textContent = String(new Set(records.map(function (r) { return r.videoId; })).size);
-    }
+    if (videosEl) videosEl.textContent = String(videoCount);
+    // 副标题静态计数同步，避免删除/导入后与统计概览不一致
+    if (summaryMarksEl) summaryMarksEl.textContent = String(records.length);
+    if (summaryVideosEl) summaryVideosEl.textContent = String(videoCount);
     if (latestEl) {
       var latest = records.reduce(function (m, r) { return Math.max(m, r.createdAt || 0); }, 0);
       latestEl.textContent = latest ? new Date(latest * 1000).toLocaleString('zh-CN', {
