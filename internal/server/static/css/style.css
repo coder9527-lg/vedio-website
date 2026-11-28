@@ -143,6 +143,26 @@ button:disabled { opacity: .6; cursor: wait; }
   border-color: var(--accent);
 }
 
+/* 卡片密度分段控件：与排序选择器同行，纯前端切换 */
+.density-box {
+  display: inline-flex;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.density-btn {
+  padding: 8px 14px;
+  border: none;
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.density-btn + .density-btn { border-left: 1px solid var(--border); }
+.density-btn:hover { color: var(--text); }
+.density-btn.active { background: var(--accent); color: #fff; }
+
 /* 视图切换 tab */
 .view-tabs {
   display: flex;
@@ -240,6 +260,18 @@ mark {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 20px;
 }
+
+/* 卡片密度三档：由 <html data-density> 驱动，仅改变网格列宽与间距 */
+:root[data-density="compact"] .video-grid {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+:root[data-density="comfortable"] .video-grid {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 28px;
+}
+:root[data-density="compact"] .video-card .meta { padding: 8px 10px; }
+:root[data-density="comfortable"] .video-card .meta { padding: 16px 18px; }
 
 .video-card-wrap { position: relative; }
 .video-card {
