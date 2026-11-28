@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      {{if .StoreOn}}<span class="count">高分影片 {{len .Cards}} 部</span>{{end}}
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container">
+    {{if not .StoreOn}}
+    <div class="empty">
+      <p>个人评分需要持久化支持。</p>
+      <p class="hint">请配置 <code>DB_PATH</code> 环境变量启用 SQLite，在影片详情页打出 1-5 星后，4 星及以上会汇总到这里。</p>
+      <p><a class="btn-secondary" href="/">返回视频库</a></p>
+    </div>
+    {{else}}
+    <h2 class="stats-heading">⭐ 我的高分</h2>
+    <p class="hint wl-hint">汇总你打出 4 星及以上的影片，按星级与评分时间倒序排列。</p>
+
+    {{if .Cards}}
+    <div class="video-grid">
+      {{range .Cards}}
+      {{$v := .Video}}
+      <div class="video-card-wrap">
+        <a class="video-card" href="/video/{{$v.ID}}">
+          <div class="thumb-wrap">
+            {{if and .Metadata .Metadata.PosterPath}}
+            <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+            {{else}}
+            <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+            {{end}}
+            <span class="ext-badge">{{$v.Ext}}</span>
+            <span class="rating-badge" title="我的评分">{{.StarsTxt}}</span>
+          </div>
+          <div class="meta">
+            {{if and .Metadata .Metadata.Title}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}{{if .Metadata.Year}} <span class="meta-year">({{.Metadata.Year}})</span>{{end}}</h2>
+            {{else}}
+            <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+            {{end}}
+            <p class="video-path">{{$v.RelPath}}</p>
+          </div>
+        </a>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty">
+      <p>还没有高分影片。</p>
+      <p class="hint">打开任意<a href="/">影片详情页</a>，打出 4 星或 5 星，它就会出现在这里。</p>
+    </div>
+    {{end}}
+    {{end}}
+  </main>
+
+  <footer class="site-footer">
+    <span>vedio-website · Go + Docker · NAS 视频站</span>
+  </footer>
+</body>
+</html>

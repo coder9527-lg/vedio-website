@@ -118,11 +118,14 @@
           <a class="nav-dropdown-item" role="menuitem" href="/browse">📁 目录浏览</a>
           <!-- 随便看看：纯后端随机，不依赖 SQLite，常驻显示 -->
           <a class="nav-dropdown-item" role="menuitem" href="/random">🎲 随便看看</a>
+          <!-- 新片时间线：按文件入库时间分组，不依赖 SQLite，常驻显示 -->
+          <a class="nav-dropdown-item" role="menuitem" href="/new">🆕 新片时间线</a>
           {{if .StoreOn}}
           <a class="nav-dropdown-item" role="menuitem" href="/stats">📊 观影统计</a>
           <a class="nav-dropdown-item" role="menuitem" href="/review">🎬 年度回顾</a>
           <a class="nav-dropdown-item" role="menuitem" href="/history">🕘 观看历史</a>
           <a class="nav-dropdown-item" role="menuitem" href="/continue">⏯️ 续播提醒</a>
+          <a class="nav-dropdown-item" role="menuitem" href="/my-ratings">⭐ 我的高分</a>
           <a class="nav-dropdown-item" role="menuitem" href="/watch-later">🕓 稍后再看</a>
           <a class="nav-dropdown-item" role="menuitem" href="/bookmarks">🔖 全部书签</a>
           <a class="nav-dropdown-item" role="menuitem" href="/shares">🔗 分享管理</a>
@@ -211,6 +214,7 @@
             <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
             {{end}}
             <span class="ext-badge">{{$v.Ext}}</span>
+            {{if isNewArrival $v}}<span class="new-badge" title="入库时间 {{$v.ModTime.Format "2006-01-02"}}">新</span>{{end}}
             <div class="progress-bar" title="已看到 {{formatDuration .Progress.Position}} / {{formatDuration .Progress.Duration}}">
               <div class="progress-fill" style="width: {{progressPercent .Progress.Position .Progress.Duration}}%"></div>
             </div>
@@ -243,6 +247,7 @@
             <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
             {{end}}
             <span class="ext-badge">{{$v.Ext}}</span>
+            {{if isNewArrival $v}}<span class="new-badge" title="入库时间 {{$v.ModTime.Format "2006-01-02"}}">新</span>{{end}}
           </div>
           <div class="meta">
             {{if and .Metadata .Metadata.Title}}
@@ -297,12 +302,17 @@
             {{end}}
             <span class="ext-badge">{{$v.Ext}}</span>
             {{if index $.State.Favs $v.ID}}<span class="fav-badge" title="已收藏">⭐</span>{{end}}
+            {{if isNewArrival $v}}<span class="new-badge" title="入库时间 {{$v.ModTime.Format "2006-01-02"}}">新</span>{{end}}
+            {{$r := index $.State.Ratings $v.ID}}
+            {{if $r}}<span class="rating-badge" title="我的评分">{{repeatStar $r.Stars}}</span>{{end}}
             {{if hasProgress $p.Position $p.Duration}}
             <div class="progress-bar" title="已看到 {{formatDuration $p.Position}} / {{formatDuration $p.Duration}}">
               <div class="progress-fill" style="width: {{progressPercent $p.Position $p.Duration}}%"></div>
             </div>
             {{end}}
           </div>
+          <!-- 详情入口：卡片整体已是播放链接，HTML 不允许嵌套 a，故用覆盖按钮 + JS 跳转 -->
+          <button type="button" class="card-detail-link" data-detail-href="/video/{{$v.ID}}" title="查看影片详情">详情</button>
           <div class="meta">
             {{if and $md $md.Title}}
             <h2 class="video-name" title="{{$v.RelPath}}">{{$md.Title}}{{if $md.Year}} <span class="meta-year">({{$md.Year}})</span>{{end}}</h2>
@@ -1210,6 +1220,17 @@
         }
       });
     })();
+  </script>
+
+  <!-- 卡片「详情」覆盖按钮：阻止冒泡到卡片播放链接，跳转独立详情页 -->
+  <script>
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-detail-href]');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      location.href = btn.dataset.detailHref;
+    });
   </script>
 </body>
 </html>

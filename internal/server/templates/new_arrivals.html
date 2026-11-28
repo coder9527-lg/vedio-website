@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      <span class="count">共 {{.Total}} 部</span>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="stats-heading">🆕 新片时间线</h2>
+    <p class="hint wl-hint">按文件入库时间倒序排列；入库 {{.NewDays}} 天内的视频在卡片上带「新」角标。本页不依赖持久化存储。</p>
+
+    {{if .Groups}}
+      {{range .Groups}}
+      <section class="shelf" aria-label="{{.Label}}">
+        <h3 class="shelf-title">{{.Label}}（{{len .Cards}}）</h3>
+        <div class="video-grid">
+          {{range .Cards}}
+          {{$v := .Video}}
+          <div class="video-card-wrap">
+            <a class="video-card" href="/video/{{$v.ID}}">
+              <div class="thumb-wrap">
+                {{if and .Metadata .Metadata.PosterPath}}
+                <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+                {{else}}
+                <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+                {{end}}
+                <span class="ext-badge">{{$v.Ext}}</span>
+                <span class="new-badge" title="入库时间 {{$v.ModTime.Format "2006-01-02"}}">新</span>
+                <p class="new-date">{{$v.ModTime.Format "2006-01-02"}}</p>
+              </div>
+              <div class="meta">
+                {{if and .Metadata .Metadata.Title}}
+                <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}{{if .Metadata.Year}} <span class="meta-year">({{.Metadata.Year}})</span>{{end}}</h2>
+                {{else}}
+                <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+                {{end}}
+                <p class="video-path">{{$v.RelPath}}</p>
+              </div>
+            </a>
+          </div>
+          {{end}}
+        </div>
+      </section>
+      {{end}}
+    {{else}}
+    <div class="empty">
+      <p>媒体库还没有视频。</p>
+      <p class="hint">把视频放入媒体目录并完成扫描后，这里会按入库时间展示时间线。</p>
+    </div>
+    {{end}}
+  </main>
+
+  <footer class="site-footer">
+    <span>vedio-website · Go + Docker · NAS 视频站</span>
+  </footer>
+</body>
+</html>

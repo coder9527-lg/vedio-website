@@ -113,6 +113,8 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /watch/{id}", s.handleWatch)
+	// 影片详情页：聚合元信息、进度、收藏/标签与分级「更多类似」推荐（纯只读 SSR）
+	mux.HandleFunc("GET /video/{id}", s.handleVideoDetail)
 	mux.HandleFunc("GET /shows/{id}", s.handleShowPage)
 	// 演员/导演聚合页：名字经路径变量传入，模板侧用 personURL 做路径转义
 	mux.HandleFunc("GET /person/{name}", s.handlePerson)
@@ -134,6 +136,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /watch-later", s.handleWatchLaterPage)
 	// 续播提醒：聚合所有看到一半的视频，按最近观看排序，展示剩余时长并一键续播（依赖 SQLite）
 	mux.HandleFunc("GET /continue", s.handleContinuePage)
+	// 我的高分：个人 4 星及以上评分的智能视图
+	mux.HandleFunc("GET /my-ratings", s.handleHighRatedPage)
+	mux.HandleFunc("GET /new", s.handleNewArrivals)
 	mux.HandleFunc("GET /random", s.handleRandom)
 	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
 	mux.HandleFunc("GET /review", s.handleReview)
@@ -186,6 +191,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /watch-later/list", s.handleWatchLaterList)
 	mux.HandleFunc("POST /api/v1/videos/{id}/watch-later", s.handleWatchLaterAdd)
 	mux.HandleFunc("DELETE /api/v1/videos/{id}/watch-later", s.handleWatchLaterRemove)
+	// 个人 1-5 星评分：读/写/清除，未启用持久化时统一 503
+	mux.HandleFunc("GET /api/v1/videos/{id}/rating", s.handleRatingGet)
+	mux.HandleFunc("PUT /api/v1/videos/{id}/rating", s.handleRatingPut)
+	mux.HandleFunc("DELETE /api/v1/videos/{id}/rating", s.handleRatingDelete)
 	mux.HandleFunc("GET /api/v1/videos/{id}/watch-later", s.handleWatchLaterGet)
 
 	// 视频标签（仅在启用持久化时可用，否则返回 503）

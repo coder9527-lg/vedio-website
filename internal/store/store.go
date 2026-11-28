@@ -171,6 +171,13 @@ CREATE TABLE IF NOT EXISTS video_tag (
     PRIMARY KEY (tag_id, video_id)
 );
 CREATE INDEX IF NOT EXISTS idx_video_tag_video ON video_tag(video_id);
+-- 个人 1-5 星评分：一部视频一行，覆盖式更新；0 星等价于删除
+CREATE TABLE IF NOT EXISTS ratings (
+    video_id   TEXT PRIMARY KEY,
+    stars      INTEGER NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ratings_stars ON ratings(stars DESC, updated_at DESC);
 `)
 	if err != nil {
 		return err
@@ -596,7 +603,10 @@ func (s *Store) Prune(existing map[string]bool) error {
 		if _, err = s.db.Exec(`DELETE FROM video_tag`); err != nil {
 			return err
 		}
-		_, err = s.db.Exec(`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM video_tag)`)
+		if _, err = s.db.Exec(`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM video_tag)`); err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`DELETE FROM ratings`)
 		return err
 	}
 
@@ -636,7 +646,11 @@ func (s *Store) Prune(existing map[string]bool) error {
 		`DELETE FROM video_tag WHERE video_id NOT IN (`+inClause+`)`, args...); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(
+		`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM video_tag)`); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(
-		`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM video_tag)`)
+		`DELETE FROM ratings WHERE video_id NOT IN (`+inClause+`)`, args...)
 	return err
 }

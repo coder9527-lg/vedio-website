@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestWatchPageSleepTimerInjection 锁死第十六轮睡眠定时器的前端契约：
+// TestWatchPageSleepTimerInjection 锁死睡眠定时器的前端契约：
 // 纯浏览器行为、与持久化无关（store=nil 夹具），服务端只验证注入锚点。
 func TestWatchPageSleepTimerInjection(t *testing.T) {
 	// newSubtitleUploadServer 是 store=nil 的最小夹具：睡眠定时不受 StoreOn 门控
@@ -20,10 +20,11 @@ func TestWatchPageSleepTimerInjection(t *testing.T) {
 		`id="sleep-menu-btn"`,
 		`id="sleep-dropdown"`,
 		`睡眠定时`,
-		// 固定三档与关闭项
+		// 固定三档、本集结束档与关闭项
 		`15 分钟`,
 		`30 分钟`,
 		`60 分钟`,
+		`{ minutes: -1, label: '本集结束' }`,
 		`label: '关闭'`,
 		// 墙钟倒计时契约
 		`let deadline = null`,
@@ -33,6 +34,11 @@ func TestWatchPageSleepTimerInjection(t *testing.T) {
 		// 到点仅暂停 + 提示
 		`if (!player.paused) player.pause()`,
 		`睡眠定时到点，已暂停播放`,
+		// 本集结束档：ended 监听、时长未知降级、播完提示
+		`function onEpisodeEnd()`,
+		`player.addEventListener('ended', onEpisodeEnd)`,
+		`本集已播完，睡眠定时已暂停`,
+		`无法使用「本集结束」`,
 		// 剩余时间按钮文案前缀
 		`'睡眠 ' + formatRemain`,
 	} {

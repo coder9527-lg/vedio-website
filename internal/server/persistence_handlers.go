@@ -236,9 +236,10 @@ type videoState struct {
 	WatchLater map[string]bool        // 视频 ID → 是否在稍后再看清单
 	Members    map[string][]string    // 视频 ID → 所属播放列表 ID 列表
 	Tags       map[string][]store.Tag // 视频 ID → 标签列表
+	Ratings    map[string]store.Rating // 视频 ID → 个人评分
 }
 
-// loadVideoState 一次性读取进度、收藏、播放列表成员关系与标签；未启用持久化时返回零值。
+// loadVideoState 一次性读取进度、收藏、播放列表成员关系、标签与评分；未启用持久化时返回零值。
 func (s *Server) loadVideoState() videoState {
 	st := videoState{
 		Progress:   map[string]store.Progress{},
@@ -246,6 +247,7 @@ func (s *Server) loadVideoState() videoState {
 		WatchLater: map[string]bool{},
 		Members:    map[string][]string{},
 		Tags:       map[string][]store.Tag{},
+		Ratings:    map[string]store.Rating{},
 	}
 	if !s.storeEnabled() {
 		return st
@@ -274,6 +276,11 @@ func (s *Server) loadVideoState() videoState {
 		st.Tags = m
 	} else {
 		log.Printf("读取视频标签失败: %v", err)
+	}
+	if m, err := s.store.RatingMap(); err == nil {
+		st.Ratings = m
+	} else {
+		log.Printf("读取个人评分失败: %v", err)
 	}
 	return st
 }

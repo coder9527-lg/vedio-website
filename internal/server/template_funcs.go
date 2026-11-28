@@ -6,6 +6,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/coder9527-lg/vedio-website/internal/media"
 )
 
 // tmplFuncs 提供模板里使用的格式化辅助函数。
@@ -43,6 +46,21 @@ var tmplFuncs = template.FuncMap{
 	// personURL 生成演员/导演聚合页链接，对人名做路径转义（空格、中文等）。
 	"personURL": func(name string) string {
 		return "/person/" + url.PathEscape(strings.TrimSpace(name))
+	},
+	// repeatStar 把 1-5 星转成实心星展示串（卡片角标用，空星省略）。
+	"repeatStar": func(stars int) string {
+		if stars < 0 {
+			stars = 0
+		}
+		if stars > 5 {
+			stars = 5
+		}
+		return strings.Repeat("★", stars)
+	},
+	// isNewArrival 判断视频是否在新片窗口内入库，供卡片「新」角标使用；
+	// 闭包内取当前时间，与 new_arrival_handlers.go 的判定口径保持一致。
+	"isNewArrival": func(v *media.Video) bool {
+		return isNewArrival(v, time.Now())
 	},
 	// indexURL 生成保持 type/view/sort/q/genre/tag 六元组正交的首页链接；
 	// overrides 以 key/value 成对传入覆盖项，空值表示从 URL 中移除该参数。

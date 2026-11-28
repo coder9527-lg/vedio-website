@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <!-- 防闪烁：首帧绘制前按本地偏好写好 data-theme，与 theme.js 共用 vw:theme 约定 -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('vw:theme');
+        if (m !== 'light' && m !== 'dark') m = 'system';
+        var t = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m;
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script src="/static/js/theme.js" defer></script>
+  <!-- PWA：可安装到主屏，静默依赖浏览器自带安装入口 -->
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="视频库">
+  <script src="/static/js/pwa.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1><a href="/" class="back-link">← 返回视频库</a></h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题">🌓</button>
+      {{if .AuthEnabled}}
+      <form method="post" action="/logout" class="inline-form">
+        <button type="submit" class="btn-secondary">退出登录</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <main class="container" data-video-detail data-id="{{.Video.ID}}">
+    <!-- 顶部主信息区：海报 + 标题/元信息/操作 -->
+    <section class="vd-hero">
+      <div class="vd-poster-wrap">
+        {{if and .HasMeta .Metadata.PosterPath}}
+        <img class="vd-poster" src="/artwork/{{.Video.ID}}/poster" alt="{{.Video.Name}}" loading="lazy">
+        {{else}}
+        <img class="vd-poster" src="/thumb/{{.Video.ID}}" alt="{{.Video.Name}}" loading="lazy">
+        {{end}}
+        <span class="ext-badge">{{.Video.Ext}}</span>
+      </div>
+      <div class="vd-info">
+        <h2 class="vd-title" data-vd-title>
+          {{if .Metadata.Title}}{{.Metadata.Title}}{{else}}{{.Video.Name}}{{end}}
+        </h2>
+        {{if and .Metadata.Title (ne .Metadata.Title .Video.Name)}}
+        <p class="vd-original">{{.Video.Name}}</p>
+        {{end}}
+
+        <!-- 一行式关键元信息：年份/时长/评分/类型/工作室，缺字段自动留白 -->
+        <p class="vd-meta-line">
+          {{if .Metadata.Year}}<span class="vd-chip">{{.Metadata.Year}}</span>{{end}}
+          {{if .Metadata.Runtime}}<span class="vd-chip">{{.Metadata.Runtime}} 分钟</span>{{end}}
+          {{if .Metadata.Rating}}<span class="vd-chip">⭐ {{printf "%.1f" .Metadata.Rating}} / 10</span>{{end}}
+          {{if .Metadata.Studio}}<span class="vd-chip">{{.Metadata.Studio}}</span>{{end}}
+        </p>
+        {{if .Metadata.Genres}}
+        <p class="vd-genres">
+          {{range .Metadata.Genres}}<a class="vd-genre-link" href="/?genre={{.}}">{{.}}</a>{{end}}
+        </p>
+        {{end}}
+
+        {{if .Metadata.Overview}}
+        <p class="vd-overview">{{.Metadata.Overview}}</p>
+        {{else if not .HasMeta}}
+        <p class="vd-overview vd-overview-empty">暂无刮削简介。配置 NFO 或 TMDB 在线刮削后这里会展示影片简介。</p>
+        {{end}}
+
+        <!-- 演职人员：人名链接到人物聚合页 -->
+        {{if .Metadata.Directors}}
+        <p class="vd-credits"><span class="vd-credits-label">导演</span>
+          {{range $i, $name := .Metadata.Directors}}{{if $i}}、{{end}}<a class="vd-person-link" href="{{personURL $name}}">{{$name}}</a>{{end}}
+        </p>
+        {{end}}
+        {{if .Metadata.Actors}}
+        <p class="vd-credits"><span class="vd-credits-label">主演</span>
+          {{range $i, $name := .Metadata.Actors}}{{if $i}}、{{end}}<a class="vd-person-link" href="{{personURL $name}}">{{$name}}</a>{{end}}
+        </p>
+        {{end}}
+
+        <!-- 文件信息：路径/大小/入库时间，零元信息视频也有 -->
+        <div class="vd-file-info">
+          <p class="vd-file-row"><span class="vd-credits-label">文件</span><span title="{{.Video.RelPath}}">{{.Video.RelPath}}</span></p>
+          <p class="vd-file-row"><span class="vd-credits-label">大小</span>{{humanSize .Video.Size}}</p>
+          <p class="vd-file-row"><span class="vd-credits-label">入库</span>{{.Video.ModTime.Format "2006-01-02 15:04"}}</p>
+          {{if .HasMeta}}<p class="vd-file-row"><span class="vd-credits-label">来源</span>{{scrapeSource .Metadata.Source}}</p>{{end}}
+        </div>
+
+        <!-- 操作区：播放为主按钮，收藏/稍后再看走既有 API，剧集成员给「返回剧集」 -->
+        <div class="vd-actions">
+          <a class="btn-primary vd-play-btn" href="/watch/{{.Video.ID}}">▶ 立即播放</a>
+          {{if .StoreOn}}
+          <button type="button" class="btn-secondary vd-fav-btn" data-vd-fav data-id="{{.Video.ID}}" data-fav="{{if .Fav}}1{{else}}0{{end}}">
+            {{if .Fav}}★ 已收藏{{else}}☆ 收藏{{end}}
+          </button>
+          <button type="button" class="btn-secondary vd-wl-btn" data-vd-watchlater data-id="{{.Video.ID}}" data-on="{{if .WatchLater}}1{{else}}0{{end}}">
+            {{if .WatchLater}}已加入稍后再看{{else}}＋ 稍后再看{{end}}
+          </button>
+          {{end}}
+          {{if .ShowID}}
+          <a class="btn-secondary" href="/shows/{{.ShowID}}">查看剧集{{if .ShowTitle}}：{{.ShowTitle}}{{end}}</a>
+          {{end}}
+        </div>
+
+        {{if .StoreOn}}
+        <!-- 个人 1-5 星评分：写入 PUT /rating；再点当前星级走 DELETE 清除 -->
+        <div class="vd-rating" data-vd-rating data-id="{{.Video.ID}}" data-stars="{{.MyStars}}">
+          <span class="vd-credits-label">我的评分</span>
+          <span class="star-row" role="radiogroup" aria-label="个人评分">
+            <button type="button" class="star-btn" data-star="1" aria-label="1 星">{{if ge .MyStars 1}}★{{else}}☆{{end}}</button>
+            <button type="button" class="star-btn" data-star="2" aria-label="2 星">{{if ge .MyStars 2}}★{{else}}☆{{end}}</button>
+            <button type="button" class="star-btn" data-star="3" aria-label="3 星">{{if ge .MyStars 3}}★{{else}}☆{{end}}</button>
+            <button type="button" class="star-btn" data-star="4" aria-label="4 星">{{if ge .MyStars 4}}★{{else}}☆{{end}}</button>
+            <button type="button" class="star-btn" data-star="5" aria-label="5 星">{{if ge .MyStars 5}}★{{else}}☆{{end}}</button>
+          </span>
+          <span class="rating-state" data-rating-state>{{if gt .MyStars 0}}已评 {{.MyStars}} 星 · 点当前星清除{{else}}未评分{{end}}</span>
+        </div>
+        {{end}}
+
+        {{if .Tags}}
+        <div class="vd-tag-row">
+          <span class="vd-credits-label">标签</span>
+          {{range .Tags}}<a class="card-tag" href="/?tag={{.Name}}">{{.Name}}</a>{{end}}
+        </div>
+        {{end}}
+
+        <!-- 播放进度：有效进度才展示，含百分比与剩余时长 -->
+        {{if .Progress.Available}}
+        <div class="vd-progress" data-vd-progress>
+          <p class="vd-progress-text">
+            已看 {{formatDuration .Progress.Position}}{{if gt .Progress.Duration 0.0}} / {{formatDuration .Progress.Duration}}（{{.Progress.Percent}}%）{{end}}
+            {{if gt .Progress.Remain 0.0}}· 剩 {{formatDuration .Progress.Remain}}{{end}}
+            · <a href="/watch/{{.Video.ID}}">从上次位置继续 ▶</a>
+          </p>
+          <div class="progress-bar"><div class="progress-fill" style="width: {{.Progress.Percent}}%"></div></div>
+        </div>
+        {{end}}
+      </div>
+    </section>
+
+    <!-- 更多类似：分级推荐，无任何候选时整块隐藏 -->
+    {{if .Similar}}
+    <section class="shelf" aria-label="更多类似">
+      <h3 class="shelf-title">更多类似（{{len .Similar}}）</h3>
+      <div class="video-grid" data-vd-similar>
+        {{range .Similar}}
+        {{$v := .Video}}
+        <div class="video-card-wrap">
+          <a class="video-card" href="/video/{{$v.ID}}">
+            <div class="thumb-wrap">
+              {{if and .Metadata .Metadata.PosterPath}}
+              <img class="thumb" src="/artwork/{{$v.ID}}/poster" alt="{{$v.Name}}" loading="lazy">
+              {{else}}
+              <img class="thumb" src="/thumb/{{$v.ID}}" alt="{{$v.Name}}" loading="lazy">
+              {{end}}
+              <span class="ext-badge">{{$v.Ext}}</span>
+            </div>
+            <div class="meta">
+              {{if and .Metadata .Metadata.Title}}
+              <h2 class="video-name" title="{{$v.RelPath}}">{{.Metadata.Title}}{{if .Metadata.Year}} <span class="meta-year">({{.Metadata.Year}})</span>{{end}}</h2>
+              {{else}}
+              <h2 class="video-name" title="{{$v.RelPath}}">{{$v.Name}}</h2>
+              {{end}}
+              <p class="video-path">{{$v.RelPath}}</p>
+              <p class="vd-reason">{{.Reason}}</p>
+            </div>
+          </a>
+        </div>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+  </main>
+
+  <footer class="site-footer">
+    <span>vedio-website · Go + Docker · NAS 视频站</span>
+  </footer>
+
+  {{if .StoreOn}}
+  <script>
+    (() => {
+      const root = document.querySelector('[data-video-detail]');
+      if (!root) return;
+
+      async function call(url, method) {
+        const res = await fetch(url, { method });
+        if (res.status === 401) { location.href = '/login'; return null; }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res;
+      }
+
+      // 收藏切换：复用 POST /favorite（后端为 toggle 语义），成功后翻转按钮文案
+      const favBtn = root.querySelector('[data-vd-fav]');
+      if (favBtn) {
+        favBtn.addEventListener('click', async () => {
+          const id = favBtn.dataset.id;
+          favBtn.disabled = true;
+          try {
+            const res = await call('/api/v1/videos/' + encodeURIComponent(id) + '/favorite', 'POST');
+            if (!res) return;
+            const on = favBtn.dataset.fav !== '1';
+            favBtn.dataset.fav = on ? '1' : '0';
+            favBtn.textContent = on ? '★ 已收藏' : '☆ 收藏';
+          } catch (err) {
+            alert('收藏操作失败: ' + err.message);
+          } finally {
+            favBtn.disabled = false;
+          }
+        });
+      }
+
+      // 个人评分：点星写入 PUT；点当前已评的同档星则 DELETE 清除
+      const ratingBox = root.querySelector('[data-vd-rating]');
+      if (ratingBox) {
+        const stateEl = ratingBox.querySelector('[data-rating-state]');
+        const paint = (stars) => {
+          ratingBox.dataset.stars = String(stars);
+          ratingBox.querySelectorAll('.star-btn').forEach((btn) => {
+            const n = Number(btn.dataset.star);
+            btn.textContent = n <= stars ? '★' : '☆';
+          });
+          if (stateEl) {
+            stateEl.textContent = stars > 0 ? '已评 ' + stars + ' 星 · 点当前星清除' : '未评分';
+          }
+        };
+        ratingBox.querySelectorAll('.star-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const id = ratingBox.dataset.id;
+            const pick = Number(btn.dataset.star);
+            const current = Number(ratingBox.dataset.stars || '0');
+            const clearing = pick === current;
+            try {
+              let res;
+              if (clearing) {
+                res = await call('/api/v1/videos/' + encodeURIComponent(id) + '/rating', 'DELETE');
+              } else {
+                res = await fetch('/api/v1/videos/' + encodeURIComponent(id) + '/rating', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ stars: pick }),
+                });
+                if (res.status === 401) { location.href = '/login'; return; }
+              }
+              if (!res) return;
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              paint(clearing ? 0 : pick);
+            } catch (err) {
+              alert('评分操作失败: ' + err.message);
+            }
+          });
+        });
+      }
+
+      // 稍后再看：加入用 POST、移除用 DELETE，按当前状态选择
+      const wlBtn = root.querySelector('[data-vd-watchlater]');
+      if (wlBtn) {
+        wlBtn.addEventListener('click', async () => {
+          const id = wlBtn.dataset.id;
+          const on = wlBtn.dataset.on === '1';
+          wlBtn.disabled = true;
+          try {
+            const res = await call('/api/v1/videos/' + encodeURIComponent(id) + '/watch-later', on ? 'DELETE' : 'POST');
+            if (!res) return;
+            wlBtn.dataset.on = on ? '0' : '1';
+            wlBtn.textContent = on ? '＋ 稍后再看' : '已加入稍后再看';
+          } catch (err) {
+            alert('稍后再看操作失败: ' + err.message);
+          } finally {
+            wlBtn.disabled = false;
+          }
+        });
+      }
+    })();
+  </script>
+  {{end}}
+</body>
+</html>
